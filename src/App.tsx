@@ -1,0 +1,552 @@
+import React, { useEffect, useRef, useState } from 'react';
+import Matter from 'matter-js';
+import { Send } from 'lucide-react';
+
+const COUNTRIES: Record<string, { code: string, emoji: string }> = {
+  "afghanistan": { code: "af", emoji: "🇦🇫" }, "albania": { code: "al", emoji: "🇦🇱" }, "algeria": { code: "dz", emoji: "🇩🇿" },
+  "andorra": { code: "ad", emoji: "🇦🇩" }, "angola": { code: "ao", emoji: "🇦🇴" }, "argentina": { code: "ar", emoji: "🇦🇷" },
+  "armenia": { code: "am", emoji: "🇦🇲" }, "australia": { code: "au", emoji: "🇦🇺" }, "austria": { code: "at", emoji: "🇦🇹" },
+  "azerbaijan": { code: "az", emoji: "🇦🇿" }, "bahamas": { code: "bs", emoji: "🇧🇸" }, "bahrain": { code: "bh", emoji: "🇧🇭" },
+  "bangladesh": { code: "bd", emoji: "🇧🇩" }, "barbados": { code: "bb", emoji: "🇧🇧" }, "belarus": { code: "by", emoji: "🇧🇾" },
+  "belgium": { code: "be", emoji: "🇧🇪" }, "belize": { code: "bz", emoji: "🇧🇿" }, "benin": { code: "bj", emoji: "🇧🇯" },
+  "bhutan": { code: "bt", emoji: "🇧🇹" }, "bolivia": { code: "bo", emoji: "🇧🇴" }, "bosnia": { code: "ba", emoji: "🇧🇦" },
+  "botswana": { code: "bw", emoji: "🇧🇼" }, "brazil": { code: "br", emoji: "🇧🇷" }, "brunei": { code: "bn", emoji: "🇧🇳" },
+  "bulgaria": { code: "bg", emoji: "🇧🇬" }, "burkina faso": { code: "bf", emoji: "🇧🇫" }, "burundi": { code: "bi", emoji: "🇧🇮" },
+  "cambodia": { code: "kh", emoji: "🇰🇭" }, "cameroon": { code: "cm", emoji: "🇨🇲" }, "canada": { code: "ca", emoji: "🇨🇦" },
+  "cape verde": { code: "cv", emoji: "🇨🇻" }, "central african republic": { code: "cf", emoji: "🇨🇫" }, "chad": { code: "td", emoji: "🇹🇩" },
+  "chile": { code: "cl", emoji: "🇨🇱" }, "china": { code: "cn", emoji: "🇨🇳" }, "colombia": { code: "co", emoji: "🇨🇴" },
+  "comoros": { code: "km", emoji: "🇰🇲" }, "congo": { code: "cg", emoji: "🇨🇬" }, "costa rica": { code: "cr", emoji: "🇨🇷" },
+  "croatia": { code: "hr", emoji: "🇭🇷" }, "cuba": { code: "cu", emoji: "🇨🇺" }, "cyprus": { code: "cy", emoji: "🇨🇾" },
+  "czech republic": { code: "cz", emoji: "🇨🇿" }, "denmark": { code: "dk", emoji: "🇩🇰" }, "djibouti": { code: "dj", emoji: "🇩🇯" },
+  "dominica": { code: "dm", emoji: "🇩🇲" }, "dominican republic": { code: "do", emoji: "🇩🇴" }, "ecuador": { code: "ec", emoji: "🇪🇨" },
+  "egypt": { code: "eg", emoji: "🇪🇬" }, "el salvador": { code: "sv", emoji: "🇸🇻" }, "equatorial guinea": { code: "gq", emoji: "🇬🇶" },
+  "eritrea": { code: "er", emoji: "🇪🇷" }, "estonia": { code: "ee", emoji: "🇪🇪" }, "eswatini": { code: "sz", emoji: "🇸🇿" },
+  "ethiopia": { code: "et", emoji: "🇪🇹" }, "fiji": { code: "fj", emoji: "🇫🇯" }, "finland": { code: "fi", emoji: "🇫🇮" },
+  "france": { code: "fr", emoji: "🇫🇷" }, "gabon": { code: "ga", emoji: "🇬🇦" }, "gambia": { code: "gm", emoji: "🇬🇲" },
+  "georgia": { code: "ge", emoji: "🇬🇪" }, "germany": { code: "de", emoji: "🇩🇪" }, "ghana": { code: "gh", emoji: "🇬🇭" },
+  "greece": { code: "gr", emoji: "🇬🇷" }, "grenada": { code: "gd", emoji: "🇬🇩" }, "guatemala": { code: "gt", emoji: "🇬🇹" },
+  "guinea": { code: "gn", emoji: "🇬🇳" }, "guinea-bissau": { code: "gw", emoji: "🇬🇼" }, "guyana": { code: "gy", emoji: "🇬🇾" },
+  "haiti": { code: "ht", emoji: "🇭🇹" }, "honduras": { code: "hn", emoji: "🇭🇳" }, "hungary": { code: "hu", emoji: "🇭🇺" },
+  "iceland": { code: "is", emoji: "🇮🇸" }, "india": { code: "in", emoji: "🇮🇳" }, "indonesia": { code: "id", emoji: "🇮🇩" },
+  "iran": { code: "ir", emoji: "🇮🇷" }, "iraq": { code: "iq", emoji: "🇮🇶" }, "ireland": { code: "ie", emoji: "🇮🇪" },
+  "israel": { code: "il", emoji: "🇮🇱" }, "italy": { code: "it", emoji: "🇮🇹" }, "jamaica": { code: "jm", emoji: "🇯🇲" },
+  "japan": { code: "jp", emoji: "🇯🇵" }, "jordan": { code: "jo", emoji: "🇯🇴" }, "kazakhstan": { code: "kz", emoji: "🇰🇿" },
+  "kenya": { code: "ke", emoji: "🇰🇪" }, "kiribati": { code: "ki", emoji: "🇰🇮" }, "kuwait": { code: "kw", emoji: "🇰🇼" },
+  "kyrgyzstan": { code: "kg", emoji: "🇰🇬" }, "laos": { code: "la", emoji: "🇱🇦" }, "latvia": { code: "lv", emoji: "🇱🇻" },
+  "lebanon": { code: "lb", emoji: "🇱🇧" }, "lesotho": { code: "ls", emoji: "🇱🇸" }, "liberia": { code: "lr", emoji: "🇱🇷" },
+  "libya": { code: "ly", emoji: "🇱🇾" }, "liechtenstein": { code: "li", emoji: "🇱🇮" }, "lithuania": { code: "lt", emoji: "🇱🇹" },
+  "luxembourg": { code: "lu", emoji: "🇱🇺" }, "madagascar": { code: "mg", emoji: "🇲🇬" }, "malawi": { code: "mw", emoji: "🇲🇼" },
+  "malaysia": { code: "my", emoji: "🇲🇾" }, "maldives": { code: "mv", emoji: "🇲🇻" }, "mali": { code: "ml", emoji: "🇲🇱" },
+  "malta": { code: "mt", emoji: "🇲🇹" }, "marshall islands": { code: "mh", emoji: "🇲🇭" }, "mauritania": { code: "mr", emoji: "🇲🇷" },
+  "mauritius": { code: "mu", emoji: "🇲🇺" }, "mexico": { code: "mx", emoji: "🇲🇽" }, "micronesia": { code: "fm", emoji: "🇫🇲" },
+  "moldova": { code: "md", emoji: "🇲🇩" }, "monaco": { code: "mc", emoji: "🇲🇨" }, "mongolia": { code: "mn", emoji: "🇲🇳" },
+  "montenegro": { code: "me", emoji: "🇲🇪" }, "morocco": { code: "ma", emoji: "🇲🇦" }, "mozambique": { code: "mz", emoji: "🇲🇿" },
+  "myanmar": { code: "mm", emoji: "🇲🇲" }, "namibia": { code: "na", emoji: "🇳🇦" }, "nauru": { code: "nr", emoji: "🇳🇷" },
+  "nepal": { code: "np", emoji: "🇳🇵" }, "netherlands": { code: "nl", emoji: "🇳🇱" }, "new zealand": { code: "nz", emoji: "🇳🇿" },
+  "nicaragua": { code: "ni", emoji: "🇳🇮" }, "niger": { code: "ne", emoji: "🇳🇪" }, "nigeria": { code: "ng", emoji: "🇳🇬" },
+  "north korea": { code: "kp", emoji: "🇰🇵" }, "north macedonia": { code: "mk", emoji: "🇲🇰" }, "norway": { code: "no", emoji: "🇳🇴" },
+  "oman": { code: "om", emoji: "🇴🇲" }, "pakistan": { code: "pk", emoji: "🇵🇰" }, "palau": { code: "pw", emoji: "🇵🇼" },
+  "palestine": { code: "ps", emoji: "🇵🇸" }, "panama": { code: "pa", emoji: "🇵🇦" }, "papua new guinea": { code: "pg", emoji: "🇵🇬" },
+  "paraguay": { code: "py", emoji: "🇵🇾" }, "peru": { code: "pe", emoji: "🇵🇪" }, "philippines": { code: "ph", emoji: "🇵🇭" },
+  "poland": { code: "pl", emoji: "🇵🇱" }, "portugal": { code: "pt", emoji: "🇵🇹" }, "qatar": { code: "qa", emoji: "🇶🇦" },
+  "romania": { code: "ro", emoji: "🇷🇴" }, "russia": { code: "ru", emoji: "🇷🇺" }, "rwanda": { code: "rw", emoji: "🇷🇼" },
+  "saint kitts": { code: "kn", emoji: "🇰🇳" }, "saint lucia": { code: "lc", emoji: "🇱🇨" }, "saint vincent": { code: "vc", emoji: "🇻🇨" },
+  "samoa": { code: "ws", emoji: "🇼🇸" }, "san marino": { code: "sm", emoji: "🇸🇲" }, "sao tome": { code: "st", emoji: "🇸🇹" },
+  "saudi arabia": { code: "sa", emoji: "🇸🇦" }, "senegal": { code: "sn", emoji: "🇸🇳" }, "serbia": { code: "rs", emoji: "🇷🇸" },
+  "seychelles": { code: "sc", emoji: "🇸🇨" }, "sierra leone": { code: "sl", emoji: "🇸🇱" }, "singapore": { code: "sg", emoji: "🇸🇬" },
+  "slovakia": { code: "sk", emoji: "🇸🇰" }, "slovenia": { code: "si", emoji: "🇸🇮" }, "solomon islands": { code: "sb", emoji: "🇸🇧" },
+  "somalia": { code: "so", emoji: "🇸🇴" }, "south africa": { code: "za", emoji: "🇿🇦" }, "south korea": { code: "kr", emoji: "🇰🇷" },
+  "south sudan": { code: "ss", emoji: "🇸🇸" }, "spain": { code: "es", emoji: "🇪🇸" }, "sri lanka": { code: "lk", emoji: "🇱🇰" },
+  "sudan": { code: "sd", emoji: "🇸🇩" }, "suriname": { code: "sr", emoji: "🇸🇷" }, "sweden": { code: "se", emoji: "🇸🇪" },
+  "switzerland": { code: "ch", emoji: "🇨🇭" }, "syria": { code: "sy", emoji: "🇸🇾" }, "taiwan": { code: "tw", emoji: "🇹🇼" },
+  "tajikistan": { code: "tj", emoji: "🇹🇯" }, "tanzania": { code: "tz", emoji: "🇹🇿" }, "thailand": { code: "th", emoji: "🇹🇭" },
+  "togo": { code: "tg", emoji: "🇹🇬" }, "tonga": { code: "to", emoji: "🇹🇴" }, "trinidad": { code: "tt", emoji: "🇹🇹" },
+  "tunisia": { code: "tn", emoji: "🇹🇳" }, "turkey": { code: "tr", emoji: "🇹🇷" }, "turkmenistan": { code: "tm", emoji: "🇹🇲" },
+  "tuvalu": { code: "tv", emoji: "🇹🇻" }, "uganda": { code: "ug", emoji: "🇺🇬" }, "ukraine": { code: "ua", emoji: "🇺🇦" },
+  "uae": { code: "ae", emoji: "🇦🇪" }, "united arab emirates": { code: "ae", emoji: "🇦🇪" }, "uk": { code: "gb", emoji: "🇬🇧" },
+  "united kingdom": { code: "gb", emoji: "🇬🇧" }, "usa": { code: "us", emoji: "🇺🇸" }, "united states": { code: "us", emoji: "🇺🇸" },
+  "uruguay": { code: "uy", emoji: "🇺🇾" }, "uzbekistan": { code: "uz", emoji: "🇺🇿" }, "vanuatu": { code: "vu", emoji: "🇻🇺" },
+  "vatican city": { code: "va", emoji: "🇻🇦" }, "venezuela": { code: "ve", emoji: "🇻🇪" }, "vietnam": { code: "vn", emoji: "🇻🇳" },
+  "yemen": { code: "ye", emoji: "🇾🇪" }, "zambia": { code: "zm", emoji: "🇿🇲" }, "zimbabwe": { code: "zw", emoji: "🇿🇼" }
+};
+
+export default function App() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const engineRef = useRef<Matter.Engine | null>(null);
+  const reqRef = useRef<number>();
+
+  const [gameState, setGameState] = useState<'WAITING' | 'COUNTDOWN' | 'PLAYING' | 'ENDED'>('WAITING');
+  const [countdown, setCountdown] = useState(10);
+  const [winner, setWinner] = useState<{country: string, emoji: string, img?: HTMLImageElement} | null>(null);
+  const [leaderboard, setLeaderboard] = useState<Record<string, number>>({});
+  const [chatMessages, setChatMessages] = useState<{id: number, user: string, msg: string}[]>([]);
+  const [chatInput, setChatInput] = useState('');
+
+  const gameStateRef = useRef({
+    state: 'WAITING',
+    flags: [] as { id: string, body: Matter.Body, country: string, emoji: string, img?: HTMLImageElement }[],
+  });
+
+  const canvasWidth = 700;
+  const canvasHeight = 700;
+  const center = { x: canvasWidth / 2, y: canvasHeight / 2 };
+  const radius = 280;
+  const totalSegments = 60;
+  const gapSegments = 8;
+  let globalAngle = 0;
+
+  // Audio Context for bounce sound
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const lastSoundTimeRef = useRef<number>(0);
+
+  const playBounceSound = () => {
+      if (!audioCtxRef.current) {
+          audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      const ctx = audioCtxRef.current;
+      if (ctx.state === 'suspended') ctx.resume();
+
+      const now = Date.now();
+      if (now - lastSoundTimeRef.current < 50) return; // limit sound rate
+      lastSoundTimeRef.current = now;
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(400, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(600, ctx.currentTime + 0.1);
+      
+      gain.gain.setValueAtTime(0.1, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+      
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.1);
+  };
+
+  useEffect(() => {
+    const engine = Matter.Engine.create();
+    engine.gravity.y = 0;
+    engine.gravity.x = 0;
+    engine.gravity.scale = 0;
+    engineRef.current = engine;
+
+    const allParts: any[] = [];
+    for (let i = 0; i < totalSegments; i++) {
+        const segmentLength = (Math.PI * 2 * radius) / totalSegments + 4;
+        const part = Matter.Bodies.rectangle(0, 0, 12, segmentLength, {
+            isStatic: true,
+            friction: 0.1,
+            restitution: 0.8,
+        });
+        (part as any).customIndex = i;
+        (part as any).isGap = i < gapSegments;
+        allParts.push(part);
+        Matter.World.add(engine.world, part);
+    }
+
+    // Add a central peg to bounce off
+    const centerPeg = Matter.Bodies.circle(center.x, center.y, 10, {
+        isStatic: true,
+        restitution: 1,
+    });
+    Matter.World.add(engine.world, centerPeg);
+
+    const handleWin = (winningFlag: any) => {
+        gameStateRef.current.state = 'ENDED';
+        setGameState('ENDED');
+        setWinner(winningFlag);
+
+        setLeaderboard(prev => ({
+            ...prev,
+            [winningFlag.country]: (prev[winningFlag.country] || 0) + 1
+        }));
+
+        if ('speechSynthesis' in window) {
+            const utterance = new SpeechSynthesisUtterance(`${winningFlag.country} wins!`);
+            window.speechSynthesis.speak(utterance);
+        }
+
+        setTimeout(() => {
+            gameStateRef.current.flags.forEach(f => Matter.World.remove(engine.world, f.body));
+            gameStateRef.current.flags = [];
+            setWinner(null);
+            gameStateRef.current.state = 'WAITING';
+            setGameState('WAITING');
+        }, 5000);
+    };
+
+    const handleDraw = () => {
+        gameStateRef.current.state = 'ENDED';
+        setGameState('ENDED');
+        setWinner({ country: 'Nobody', emoji: '🏳️' });
+
+        if ('speechSynthesis' in window) {
+            const utterance = new SpeechSynthesisUtterance(`It's a draw!`);
+            window.speechSynthesis.speak(utterance);
+        }
+
+        setTimeout(() => {
+            gameStateRef.current.flags.forEach(f => Matter.World.remove(engine.world, f.body));
+            gameStateRef.current.flags = [];
+            setWinner(null);
+            gameStateRef.current.state = 'WAITING';
+            setGameState('WAITING');
+        }, 5000);
+    }
+
+    Matter.Events.on(engine, 'collisionStart', (event) => {
+        playBounceSound();
+    });
+
+    Matter.Events.on(engine, 'beforeUpdate', () => {
+        const currentState = gameStateRef.current.state;
+
+        if (currentState === 'PLAYING') {
+            globalAngle += 0.025;
+        } else {
+            globalAngle += 0.005;
+        }
+
+        allParts.forEach((part) => {
+            const originalAngle = (part.customIndex / totalSegments) * Math.PI * 2;
+            const currentAngle = originalAngle + globalAngle;
+            let px = center.x + Math.cos(currentAngle) * radius;
+            let py = center.y + Math.sin(currentAngle) * radius;
+
+            if (part.isGap) {
+                px = -1000;
+                py = -1000;
+            }
+
+            Matter.Body.setPosition(part, { x: px, y: py });
+            Matter.Body.setAngle(part, currentAngle);
+        });
+
+        const flags = gameStateRef.current.flags;
+        for (let i = flags.length - 1; i >= 0; i--) {
+            const flag = flags[i];
+
+            // Molecule movement
+            if (currentState === 'PLAYING') {
+                const forceMag = 0.0015 * flag.body.mass;
+                Matter.Body.applyForce(flag.body, flag.body.position, {
+                    x: (Math.random() - 0.5) * forceMag,
+                    y: (Math.random() - 0.5) * forceMag
+                });
+                
+                const speed = Matter.Vector.magnitude(flag.body.velocity);
+                if (speed > 8) {
+                    Matter.Body.setVelocity(flag.body, Matter.Vector.mult(Matter.Vector.normalise(flag.body.velocity), 8));
+                }
+            }
+
+            const dx = flag.body.position.x - center.x;
+            const dy = flag.body.position.y - center.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+
+            if (dist > radius + 30) {
+                Matter.World.remove(engine.world, flag.body);
+                flags.splice(i, 1);
+            }
+        }
+
+        if (currentState === 'PLAYING' && flags.length <= 1) {
+            if (flags.length === 1) {
+                handleWin(flags[0]);
+            } else {
+                handleDraw();
+            }
+        }
+    });
+
+    const runner = Matter.Runner.create();
+    Matter.Runner.run(runner, engine);
+
+    const render = () => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Draw ring
+        ctx.fillStyle = '#2563EB'; // Blue
+        allParts.forEach(part => {
+            if (part.position.x < 0) return; // Skip hidden gap parts
+            ctx.beginPath();
+            ctx.moveTo(part.vertices[0].x, part.vertices[0].y);
+            for (let j = 1; j < part.vertices.length; j++) {
+                ctx.lineTo(part.vertices[j].x, part.vertices[j].y);
+            }
+            ctx.lineTo(part.vertices[0].x, part.vertices[0].y);
+            ctx.fill();
+        });
+
+        // Draw center peg
+        ctx.beginPath();
+        ctx.arc(center.x, center.y, 10, 0, Math.PI * 2);
+        ctx.fillStyle = '#D1D5DB';
+        ctx.fill();
+
+        // Draw flags
+        gameStateRef.current.flags.forEach(flag => {
+            ctx.save();
+            ctx.translate(flag.body.position.x, flag.body.position.y);
+            ctx.rotate(flag.body.angle);
+            
+            // Clip to circle
+            ctx.beginPath();
+            ctx.arc(0, 0, 40, 0, Math.PI * 2);
+            ctx.clip();
+
+            if (flag.img && flag.img.complete) {
+                // Draw image to cover the 80x80 area (maintaining 4:3)
+                ctx.drawImage(flag.img, -60, -45, 120, 90);
+            } else {
+                ctx.fillStyle = '#333333';
+                ctx.fill();
+                ctx.font = '40px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = 'white';
+                ctx.fillText(flag.emoji, 0, 4);
+            }
+            ctx.restore();
+
+            // Draw border separately so it's not clipped
+            ctx.save();
+            ctx.translate(flag.body.position.x, flag.body.position.y);
+            ctx.beginPath();
+            ctx.arc(0, 0, 40, 0, Math.PI * 2);
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#FF3D68';
+            ctx.shadowColor = 'rgba(255, 61, 104, 0.3)';
+            ctx.shadowBlur = 15;
+            ctx.stroke();
+            ctx.restore();
+        });
+
+        reqRef.current = requestAnimationFrame(render);
+    };
+    render();
+
+    return () => {
+        Matter.Runner.stop(runner);
+        Matter.Engine.clear(engine);
+        if (reqRef.current) cancelAnimationFrame(reqRef.current);
+    };
+  }, []);
+
+  // Game State Logic Loop
+  useEffect(() => {
+    const interval = setInterval(() => {
+        const state = gameStateRef.current.state;
+        const flags = gameStateRef.current.flags;
+
+        if (state === 'WAITING' && flags.length >= 2) {
+            setGameState('COUNTDOWN');
+            gameStateRef.current.state = 'COUNTDOWN';
+            setCountdown(10);
+        } else if (state === 'COUNTDOWN') {
+            setCountdown(c => {
+                if (c <= 1) {
+                    setGameState('PLAYING');
+                    gameStateRef.current.state = 'PLAYING';
+                    return 0;
+                }
+                return c - 1;
+            });
+        }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const spawnFlag = (countryName: string) => {
+    const state = gameStateRef.current.state;
+    if (state === 'ENDED') return;
+
+    const normalized = countryName.trim().toLowerCase();
+    const countryData = COUNTRIES[normalized as keyof typeof COUNTRIES];
+    if (!countryData) return;
+
+    if (gameStateRef.current.flags.some(f => f.country === normalized)) return;
+
+    const x = center.x + (Math.random() - 0.5) * 100;
+    const y = center.y + (Math.random() - 0.5) * 100;
+
+    const body = Matter.Bodies.circle(x, y, 40, {
+        restitution: 1.0,
+        friction: 0,
+        frictionAir: 0,
+        density: 0.05,
+    });
+
+    Matter.Body.setVelocity(body, {
+        x: (Math.random() - 0.5) * 8,
+        y: (Math.random() - 0.5) * 8
+    });
+
+    const img = new Image();
+    img.src = `https://flagcdn.com/w80/${countryData.code}.png`;
+
+    if (engineRef.current) {
+        Matter.World.add(engineRef.current.world, body);
+        gameStateRef.current.flags.push({
+            id: Math.random().toString(),
+            body,
+            country: normalized,
+            emoji: countryData.emoji,
+            img
+        });
+    }
+  };
+
+  const handleChatSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim()) return;
+    
+    const msg = chatInput.trim();
+    setChatMessages(prev => [...prev.slice(-19), { id: Math.random(), user: 'You', msg }]);
+    spawnFlag(msg);
+    setChatInput('');
+  };
+
+  // Auto-simulate chat
+  useEffect(() => {
+    const interval = setInterval(() => {
+        if (gameStateRef.current.state !== 'ENDED' && Math.random() > 0.6) {
+            const countryKeys = Object.keys(COUNTRIES);
+            const randomCountry = countryKeys[Math.floor(Math.random() * countryKeys.length)];
+            const users = ['Gamer123', 'FlagFan', 'Speedy', 'Ninja', 'ProPlayer'];
+            const randomUser = users[Math.floor(Math.random() * users.length)];
+            
+            setChatMessages(prev => [...prev.slice(-19), { id: Math.random(), user: randomUser, msg: randomCountry }]);
+            spawnFlag(randomCountry);
+        }
+    }, 1500);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="w-full h-screen bg-white text-gray-900 font-sans overflow-hidden grid grid-cols-[280px_1fr_280px] grid-rows-[80px_1fr_100px] gap-[1px]">
+      <header className="col-span-3 bg-gray-50 flex items-center justify-between px-10 border-b border-gray-200">
+          <div className="font-black text-2xl tracking-tighter uppercase text-black">Flag Flight // Control</div>
+          <div className="font-bold text-[#FF3D68] text-sm tracking-widest uppercase">
+              {gameState === 'PLAYING' ? 'Round in Progress' : gameState === 'WAITING' ? 'Waiting for Players' : 'Round Ended'}
+          </div>
+          <div className="flex items-center gap-2 text-[#FF3D68] text-xs">
+              <div className="w-2 h-2 bg-[#FF3D68] rounded-full shadow-[0_0_10px_#FF3D68] animate-pulse"></div>
+              Voice Synthesis Ready
+          </div>
+      </header>
+
+      <aside className="bg-gray-50/80 p-6 border-r border-gray-200 flex flex-col">
+          <div className="text-[11px] uppercase tracking-widest text-gray-500 mb-5">Global Leaderboard</div>
+          {Object.entries(leaderboard).length === 0 && (
+              <div className="text-center text-xs text-gray-400 py-2">No wins yet</div>
+          )}
+          {Object.entries(leaderboard)
+              .sort(([,a], [,b]) => (b as number) - (a as number))
+              .slice(0, 6)
+              .map(([country, wins], i) => (
+                  <div key={country} className="flex justify-between items-center py-3 border-b border-gray-200">
+                      <span className="font-black text-[#FF3D68] mr-2">0{i + 1}</span>
+                      <span className="flex-1 font-medium capitalize text-gray-800">{country}</span>
+                      <span className="font-mono text-gray-500">{wins}w</span>
+                  </div>
+          ))}
+      </aside>
+
+      <main className="relative flex items-center justify-center min-h-0 overflow-hidden">
+          {/* Status Overlay */}
+          <div className="absolute top-10 left-1/2 -translate-x-1/2 z-10 pointer-events-none text-center w-full">
+              {gameState === 'WAITING' && (
+                  <div className="bg-white border border-gray-300 text-[#FF3D68] px-4 py-2 rounded font-bold animate-pulse uppercase tracking-widest text-xs shadow-sm inline-block">
+                      Waiting for players... ({gameStateRef.current.flags.length}/2)
+                  </div>
+              )}
+          </div>
+
+          {gameState === 'COUNTDOWN' && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center z-20 bg-white/90">
+                  <div className="text-gray-500 font-black tracking-[0.5em] uppercase text-2xl mb-4">Match Starts In</div>
+                  <div className="text-[#FF3D68] font-black text-[150px] leading-none animate-ping drop-shadow-2xl">
+                      {countdown}
+                  </div>
+              </div>
+          )}
+
+          {/* Canvas */}
+          <canvas 
+              ref={canvasRef} 
+              width={canvasWidth} 
+              height={canvasHeight}
+              className="max-w-full max-h-full object-contain block"
+          />
+
+          {/* Winner Overlay */}
+          {gameState === 'ENDED' && winner && (
+              <div className="absolute bottom-10 text-center w-full animate-bounce">
+                  <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-2">Last Round Winner</div>
+                  <div className="text-[82px] font-black leading-[0.9] tracking-[-4px] uppercase text-black drop-shadow-2xl flex items-center justify-center gap-4">
+                      {winner.img ? (
+                          <img src={winner.img.src} alt={winner.country} className="w-24 h-24 object-cover rounded-full border-4 border-[#FF3D68] shadow-[0_0_30px_rgba(255,61,104,0.5)]" />
+                      ) : (
+                          winner.emoji
+                      )}
+                      {winner.country}
+                  </div>
+              </div>
+          )}
+      </main>
+
+      <aside className="bg-gray-50/80 p-6 border-l border-gray-200 flex flex-col">
+          <div className="text-lg font-black uppercase tracking-widest text-gray-800 mb-5 border-b border-gray-200 pb-2">Live Chat Spawns</div>
+          <div className="flex-1 overflow-y-auto space-y-4 text-base flex flex-col-reverse">
+              {[...chatMessages].reverse().map(msg => (
+                  <div key={msg.id} className="leading-[1.4] animate-fade-in-up bg-white p-3 rounded-lg shadow-sm border border-gray-100">
+                      <span className="font-black text-[#FF3D68]">{msg.user}: </span>
+                      <span className="text-gray-800 font-bold">{msg.msg}</span>
+                      <span className="text-orange-500 font-bold italic text-xs block mt-1">+1 Flag Spawned</span>
+                  </div>
+              ))}
+          </div>
+      </aside>
+
+      <footer className="col-span-3 bg-gray-50 border-t border-gray-200 flex items-center justify-between px-10">
+          <form onSubmit={handleChatSubmit} className="flex gap-2 w-[400px]">
+              <input 
+                  type="text" 
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                  placeholder="Type a country name..."
+                  className="flex-1 bg-white border border-gray-300 text-gray-900 px-4 py-2 rounded text-[11px] font-bold uppercase tracking-widest focus:outline-none focus:border-[#FF3D68]"
+              />
+              <button type="submit" className="bg-[#FF3D68] text-white px-6 py-2 rounded text-[11px] font-bold uppercase tracking-widest border border-[#FF3D68] hover:bg-transparent hover:text-[#FF3D68] transition-colors">
+                  Spawn
+              </button>
+          </form>
+
+          <div className="flex gap-10">
+              <div className="flex flex-col">
+                  <span className="font-black text-lg text-black">{gameStateRef.current.flags.length}</span>
+                  <span className="text-[9px] text-gray-500 uppercase tracking-widest">Flags in Arena</span>
+              </div>
+              <div className="flex flex-col">
+                  <span className="font-black text-lg text-black">1.2s</span>
+                  <span className="text-[9px] text-gray-500 uppercase tracking-widest">Rotation Speed</span>
+              </div>
+              <div className="flex flex-col">
+                  <span className="font-black text-lg text-black">{chatMessages.length}</span>
+                  <span className="text-[9px] text-gray-500 uppercase tracking-widest">Chat Commands</span>
+              </div>
+          </div>
+
+          <div className="text-[9px] text-gray-500 uppercase tracking-widest">Running v1.0.4-STABLE</div>
+      </footer>
+    </div>
+  );
+}
