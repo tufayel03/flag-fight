@@ -2,6 +2,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import Matter from 'matter-js';
 import { Send } from 'lucide-react';
 
+type ChatMessage = {
+  id: string;
+  user: string;
+  msg: string;
+  createdAt: number;
+};
+
 const COUNTRIES: Record<string, { code: string, emoji: string }> = {
   "afghanistan": { code: "af", emoji: "🇦🇫" }, "albania": { code: "al", emoji: "🇦🇱" }, "algeria": { code: "dz", emoji: "🇩🇿" },
   "andorra": { code: "ad", emoji: "🇦🇩" }, "angola": { code: "ao", emoji: "🇦🇴" }, "argentina": { code: "ar", emoji: "🇦🇷" },
@@ -79,7 +86,7 @@ export default function App() {
   const [countdown, setCountdown] = useState(10);
   const [winner, setWinner] = useState<{country: string, emoji: string, img?: HTMLImageElement} | null>(null);
   const [leaderboard, setLeaderboard] = useState<Record<string, number>>({});
-  const [chatMessages, setChatMessages] = useState<{id: number, user: string, msg: string}[]>([]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
 
   // Login State
@@ -112,12 +119,18 @@ export default function App() {
   const gameStateRef = useRef({
     state: 'WAITING',
     flags: [] as { id: string, body: Matter.Body, country: string, emoji: string, img?: HTMLImageElement }[],
+    roundCountries: new Set<string>(),
   });
 
   const canvasWidth = 700;
   const canvasHeight = 700;
   const center = { x: canvasWidth / 2, y: canvasHeight / 2 };
   const radius = 280;
+  const flagInitialSpeed = 11;
+  const flagForceScale = 0.0024;
+  const flagMaxSpeed = 11;
+  const chatMessageLifetimeMs = 6000;
+  const maxVisibleChatMessages = 8;
   const totalSegments = 60;
   const gapSegments = 8;
   let globalAngle = 0;
@@ -156,6 +169,21 @@ export default function App() {
       gain.connect(audioDestRef.current);
       osc.start();
       osc.stop(ctx.currentTime + 0.1);
+  };
+
+  const addChatMessage = (user: string, msg: string) => {
+      const createdAt = Date.now();
+      const nextMessage: ChatMessage = {
+          id: `${createdAt}-${Math.random().toString(36).slice(2)}`,
+          user,
+          msg,
+          createdAt
+      };
+
+      setChatMessages(prev => {
+          const activeMessages = prev.filter(item => createdAt - item.createdAt < chatMessageLifetimeMs);
+          return [...activeMessages, nextMessage].slice(-maxVisibleChatMessages);
+      });
   };
 
   const stopStreamingSession = () => {
@@ -314,6 +342,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const interval = setInterval(() => {
+        const cutoff = Date.now() - chatMessageLifetimeMs;
+        setChatMessages(prev => prev.filter(item => item.createdAt >= cutoff));
+    }, 500);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
     const engine = Matter.Engine.create();
     engine.gravity.y = 0;
     engine.gravity.x = 0;
@@ -352,6 +388,7 @@ export default function App() {
         setTimeout(() => {
             gameStateRef.current.flags.forEach(f => Matter.World.remove(engine.world, f.body));
             gameStateRef.current.flags = [];
+            gameStateRef.current.roundCountries.clear();
             setWinner(null);
             gameStateRef.current.state = 'WAITING';
             setGameState('WAITING');
@@ -371,6 +408,7 @@ export default function App() {
         setTimeout(() => {
             gameStateRef.current.flags.forEach(f => Matter.World.remove(engine.world, f.body));
             gameStateRef.current.flags = [];
+            gameStateRef.current.roundCountries.clear();
             setWinner(null);
             gameStateRef.current.state = 'WAITING';
             setGameState('WAITING');
@@ -411,15 +449,15 @@ export default function App() {
 
             // Molecule movement
             if (currentState === 'PLAYING') {
-                const forceMag = 0.0015 * flag.body.mass;
+                const forceMag = flagForceScale * flag.body.mass;
                 Matter.Body.applyForce(flag.body, flag.body.position, {
                     x: (Math.random() - 0.5) * forceMag,
                     y: (Math.random() - 0.5) * forceMag
                 });
                 
                 const speed = Matter.Vector.magnitude(flag.body.velocity);
-                if (speed > 8) {
-                    Matter.Body.setVelocity(flag.body, Matter.Vector.mult(Matter.Vector.normalise(flag.body.velocity), 8));
+                if (speed > flagMaxSpeed) {
+                    Matter.Body.setVelocity(flag.body, Matter.Vector.mult(Matter.Vector.normalise(flag.body.velocity), flagMaxSpeed));
                 }
             }
 
@@ -546,7 +584,7 @@ export default function App() {
     const countryData = COUNTRIES[normalized as keyof typeof COUNTRIES];
     if (!countryData) return;
 
-    if (gameStateRef.current.flags.some(f => f.country === normalized)) return;
+    if (gameStateRef.current.roundCountries.has(normalized)) return;
 
     const x = center.x + (Math.random() - 0.5) * 100;
     const y = center.y + (Math.random() - 0.5) * 100;
@@ -559,8 +597,8 @@ export default function App() {
     });
 
     Matter.Body.setVelocity(body, {
-        x: (Math.random() - 0.5) * 8,
-        y: (Math.random() - 0.5) * 8
+        x: (Math.random() - 0.5) * flagInitialSpeed,
+        y: (Math.random() - 0.5) * flagInitialSpeed
     });
 
     const img = new Image();
@@ -575,6 +613,7 @@ export default function App() {
             emoji: countryData.emoji,
             img
         });
+        gameStateRef.current.roundCountries.add(normalized);
     }
   };
 
@@ -583,7 +622,7 @@ export default function App() {
     if (!chatInput.trim()) return;
     
     const msg = chatInput.trim();
-    setChatMessages(prev => [...prev.slice(-19), { id: Math.random(), user: 'You', msg }]);
+    addChatMessage('You', msg);
     spawnFlag(msg);
     setChatInput('');
   };
@@ -630,7 +669,7 @@ export default function App() {
                     const matchedCountry = sortedCountries.find(c => msg.includes(c));
                     
                     if (matchedCountry) {
-                        setChatMessages(prev => [...prev.slice(-19), { id: Math.random(), user: author, msg: matchedCountry }]);
+                        addChatMessage(author, matchedCountry);
                         spawnFlag(matchedCountry);
                     }
                 });
@@ -664,7 +703,7 @@ export default function App() {
             const users = ['Gamer123', 'FlagFan', 'Speedy', 'Ninja', 'ProPlayer'];
             const randomUser = users[Math.floor(Math.random() * users.length)];
             
-            setChatMessages(prev => [...prev.slice(-19), { id: Math.random(), user: randomUser, msg: randomCountry }]);
+            addChatMessage(randomUser, randomCountry);
             spawnFlag(randomCountry);
         }
     }, 1500);
@@ -776,7 +815,13 @@ export default function App() {
   }
 
   return (
-    <div className="w-full h-screen bg-white text-gray-900 font-sans overflow-hidden grid grid-cols-[280px_1fr_280px] grid-rows-[80px_1fr_100px] gap-[1px]">
+    <div
+      className="w-full h-screen bg-white text-gray-900 font-sans overflow-hidden grid gap-[1px]"
+      style={{
+        gridTemplateColumns: '280px minmax(0, 1fr) 280px',
+        gridTemplateRows: '80px minmax(0, 1fr) 100px',
+      }}
+    >
       <header className="col-span-3 bg-gray-50 flex items-center justify-between px-10 border-b border-gray-200">
           <div className="font-black text-2xl tracking-tighter uppercase text-black">Flag Flight // Control</div>
           <div className="font-bold text-[#FF3D68] text-sm tracking-widest uppercase">
@@ -800,7 +845,7 @@ export default function App() {
           </div>
       </header>
 
-      <aside className="bg-gray-50/80 p-6 border-r border-gray-200 flex flex-col">
+      <aside className="bg-gray-50/80 p-6 border-r border-gray-200 flex flex-col min-h-0 overflow-hidden">
           <div className="text-[11px] uppercase tracking-widest text-gray-500 mb-5">Global Leaderboard</div>
           {Object.entries(leaderboard).length === 0 && (
               <div className="text-center text-xs text-gray-400 py-2">No wins yet</div>
@@ -860,16 +905,18 @@ export default function App() {
           )}
       </main>
 
-      <aside className="bg-gray-50/80 p-6 pl-0 border-l border-gray-200 flex flex-col">
+      <aside className="bg-gray-50/80 p-6 pl-0 border-l border-gray-200 flex flex-col min-h-0 overflow-hidden">
           <div className="text-lg font-black uppercase tracking-widest text-gray-800 mb-5 border-b border-gray-200 pb-2 pl-6">Live Chat Spawns</div>
-          <div className="flex-1 overflow-y-auto space-y-4 text-xl flex flex-col-reverse pl-6">
-              {[...chatMessages].reverse().map(msg => (
-                  <div key={msg.id} className="leading-[1.4] animate-fade-in-up bg-white p-4 rounded-lg shadow-sm border border-gray-100">
+          <div className="flex-1 min-h-0 overflow-hidden pl-6 pr-4">
+              <div className="flex flex-col-reverse gap-3 text-lg leading-[1.35]">
+                  {[...chatMessages].reverse().map(msg => (
+                  <div key={msg.id} className="animate-fade-in-up border-b border-gray-200 pb-3">
                       <span className="font-black text-[#FF3D68]">{msg.user}: </span>
                       <span className="text-gray-800 font-bold">{msg.msg}</span>
-                      <span className="text-orange-500 font-bold italic text-sm block mt-1">+1 Flag Spawned</span>
+                      <span className="text-orange-500 font-bold italic text-xs block mt-1">+1 Flag Spawned</span>
                   </div>
               ))}
+              </div>
           </div>
       </aside>
 
