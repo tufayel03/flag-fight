@@ -218,53 +218,35 @@ export default function App() {
           return;
       }
 
-      // Initialize audio context if not already
+      // Initialize audio context
       if (!audioCtxRef.current) {
           audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      if (audioCtxRef.current.state === 'suspended') {
+          await audioCtxRef.current.resume();
       }
       if (!audioDestRef.current) {
           audioDestRef.current = audioCtxRef.current.createMediaStreamDestination();
       }
 
-      if (!navigator.mediaDevices?.getDisplayMedia) {
-          alert('This browser does not support full-tab capture for streaming.');
+      // Use canvas.captureStream() directly — no popup, no permission needed, never disconnects
+      const canvas = canvasRef.current;
+      if (!canvas) {
+          alert('Canvas not ready yet.');
           return;
       }
 
-      let displayStream: MediaStream;
-      try {
-          displayStream = await navigator.mediaDevices.getDisplayMedia({
-              video: {
-                  frameRate: 30,
-                  width: { ideal: 1920 },
-                  height: { ideal: 1080 }
-              },
-              audio: false,
-              preferCurrentTab: true,
-              selfBrowserSurface: 'include',
-              surfaceSwitching: 'exclude'
-          } as MediaStreamConstraints & {
-              preferCurrentTab?: boolean;
-              selfBrowserSurface?: 'include' | 'exclude';
-              surfaceSwitching?: 'include' | 'exclude';
-          });
-      } catch (error) {
-          console.error('Display capture was cancelled or failed:', error);
-          return;
-      }
-
-      const videoTrack = displayStream.getVideoTracks()[0];
+      // Capture the game canvas at 30fps
+      const canvasStream = (canvas as any).captureStream(30) as MediaStream;
+      const videoTrack = canvasStream.getVideoTracks()[0];
       if (!videoTrack) {
-          displayStream.getTracks().forEach(track => track.stop());
-          alert('No video track was provided by screen capture.');
+          alert('Failed to capture canvas stream.');
           return;
       }
 
-      displayStreamRef.current = displayStream;
-      videoTrack.addEventListener('ended', () => {
-          stopStreamingSession();
-      }, { once: true });
+      displayStreamRef.current = canvasStream;
 
+      // Combine canvas video + audio
       const audioStream = audioDestRef.current.stream;
       const combinedStream = new MediaStream([
           videoTrack,
@@ -280,14 +262,16 @@ export default function App() {
           const fullRtmpUrl = streamUrl.endsWith('/') ? `${streamUrl}${streamKey}` : `${streamUrl}/${streamKey}`;
           ws.send(JSON.stringify({ type: 'start', rtmpUrl: fullRtmpUrl }));
 
+          // Pick best supported codec
           const mimeType = [
               'video/webm; codecs=vp9,opus',
               'video/webm; codecs=vp8,opus',
               'video/webm'
           ].find(type => MediaRecorder.isTypeSupported(type));
+
           const mediaRecorder = mimeType
-              ? new MediaRecorder(combinedStream, { mimeType })
-              : new MediaRecorder(combinedStream);
+              ? new MediaRecorder(combinedStream, { mimeType, videoBitsPerSecond: 2500000 })
+              : new MediaRecorder(combinedStream, { videoBitsPerSecond: 2500000 });
 
           mediaRecorder.ondataavailable = (e) => {
               if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
@@ -301,7 +285,7 @@ export default function App() {
               }
           };
 
-          mediaRecorder.start(1000); // Send chunks every second
+          mediaRecorder.start(500); // Send chunks every 500ms for lower latency
           mediaRecorderRef.current = mediaRecorder;
           setIsStreaming(true);
       };
@@ -313,7 +297,7 @@ export default function App() {
       };
 
       ws.onclose = () => {
-          displayStream.getTracks().forEach(track => track.stop());
+          canvasStream.getTracks().forEach(track => track.stop());
           displayStreamRef.current = null;
           mediaRecorderRef.current = null;
           wsRef.current = null;
