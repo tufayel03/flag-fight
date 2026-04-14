@@ -82,6 +82,24 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<{id: number, user: string, msg: string}[]>([]);
   const [chatInput, setChatInput] = useState('');
 
+  // Login State
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [streamKey, setStreamKey] = useState('');
+  const [streamUrl, setStreamUrl] = useState('');
+  const [loginError, setLoginError] = useState('');
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (email === 'admin@admin.com' && password === 'admin123') {
+      setIsLoggedIn(true);
+      setLoginError('');
+    } else {
+      setLoginError('Invalid email or password');
+    }
+  };
+
   const gameStateRef = useRef({
     state: 'WAITING',
     flags: [] as { id: string, body: Matter.Body, country: string, emoji: string, img?: HTMLImageElement }[],
@@ -416,6 +434,7 @@ export default function App() {
 
   // Auto-simulate chat
   useEffect(() => {
+    if (!isLoggedIn) return;
     const interval = setInterval(() => {
         if (gameStateRef.current.state !== 'ENDED' && Math.random() > 0.6) {
             const countryKeys = Object.keys(COUNTRIES);
@@ -428,7 +447,84 @@ export default function App() {
         }
     }, 1500);
     return () => clearInterval(interval);
-  }, []);
+  }, [isLoggedIn]);
+
+  if (!isLoggedIn) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-xl shadow-lg max-w-md w-full border border-gray-200">
+          <div className="text-center mb-8">
+            <h1 className="font-black text-3xl tracking-tighter uppercase text-black mb-2">Flag Flight</h1>
+            <p className="text-gray-500 text-sm font-medium">Streamer Dashboard Login</p>
+          </div>
+
+          {loginError && (
+            <div className="bg-red-50 text-red-600 p-3 rounded-lg mb-6 text-sm font-bold text-center border border-red-200">
+              {loginError}
+            </div>
+          )}
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">Email</label>
+              <input 
+                type="email" 
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full bg-gray-50 border border-gray-300 text-gray-900 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-[#FF3D68] focus:ring-1 focus:ring-[#FF3D68]"
+                placeholder="admin@admin.com"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">Password</label>
+              <input 
+                type="password" 
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full bg-gray-50 border border-gray-300 text-gray-900 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-[#FF3D68] focus:ring-1 focus:ring-[#FF3D68]"
+                placeholder="admin123"
+                required
+              />
+            </div>
+
+            <div className="pt-4 border-t border-gray-100 mt-6">
+              <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4">YouTube Stream Settings</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">Stream URL</label>
+                  <input 
+                    type="text" 
+                    value={streamUrl}
+                    onChange={(e) => setStreamUrl(e.target.value)}
+                    className="w-full bg-gray-50 border border-gray-300 text-gray-900 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-[#FF3D68] focus:ring-1 focus:ring-[#FF3D68]"
+                    placeholder="rtmp://a.rtmp.youtube.com/live2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">Stream Key</label>
+                  <input 
+                    type="password" 
+                    value={streamKey}
+                    onChange={(e) => setStreamKey(e.target.value)}
+                    className="w-full bg-gray-50 border border-gray-300 text-gray-900 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-[#FF3D68] focus:ring-1 focus:ring-[#FF3D68]"
+                    placeholder="xxxx-xxxx-xxxx-xxxx"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <button 
+              type="submit" 
+              className="w-full bg-[#FF3D68] text-white font-black uppercase tracking-widest py-4 rounded-lg mt-8 hover:bg-[#e0355b] transition-colors shadow-md"
+            >
+              Login & Start Game
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full h-screen bg-white text-gray-900 font-sans overflow-hidden grid grid-cols-[280px_1fr_280px] grid-rows-[80px_1fr_100px] gap-[1px]">
