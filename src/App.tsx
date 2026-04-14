@@ -690,13 +690,7 @@ export default function App() {
   }
 
   return (
-    <div
-      className="w-full h-screen bg-white text-gray-900 font-sans overflow-hidden grid gap-[1px]"
-      style={{
-        gridTemplateColumns: '280px minmax(0, 1fr) 280px',
-        gridTemplateRows: '80px minmax(0, 1fr) 100px',
-      }}
-    >
+    <div className="w-full h-screen bg-white text-gray-900 font-sans overflow-hidden grid grid-cols-[280px_1fr_280px] grid-rows-[80px_1fr_100px] gap-[1px]">
       <header className="col-span-3 bg-gray-50 flex items-center justify-between px-10 border-b border-gray-200">
           <div className="font-black text-2xl tracking-tighter uppercase text-black">Flag Flight // Control</div>
           <div className="font-bold text-[#FF3D68] text-sm tracking-widest uppercase">
@@ -720,7 +714,7 @@ export default function App() {
           </div>
       </header>
 
-      <aside className="bg-gray-50/80 p-6 border-r border-gray-200 flex flex-col min-h-0 overflow-hidden">
+      <aside className="bg-gray-50/80 p-6 border-r border-gray-200 flex flex-col">
           <div className="text-[11px] uppercase tracking-widest text-gray-500 mb-5">Global Leaderboard</div>
           {Object.entries(leaderboard).length === 0 && (
               <div className="text-center text-xs text-gray-400 py-2">No wins yet</div>
@@ -780,14 +774,14 @@ export default function App() {
           )}
       </main>
 
-      <aside className="bg-gray-50/80 p-6 border-l border-gray-200 flex flex-col min-h-0 overflow-hidden">
-          <div className="text-lg font-black uppercase tracking-widest text-gray-800 mb-5 border-b border-gray-200 pb-2">Live Chat Spawns</div>
-          <div className="flex-1 min-h-0 overflow-y-auto space-y-4 text-base flex flex-col-reverse">
+      <aside className="bg-gray-50/80 p-6 pl-0 border-l border-gray-200 flex flex-col">
+          <div className="text-lg font-black uppercase tracking-widest text-gray-800 mb-5 border-b border-gray-200 pb-2 pl-6">Live Chat Spawns</div>
+          <div className="flex-1 overflow-y-auto space-y-4 text-xl flex flex-col-reverse pl-6">
               {[...chatMessages].reverse().map(msg => (
-                  <div key={msg.id} className="leading-[1.4] animate-fade-in-up bg-white p-3 rounded-lg shadow-sm border border-gray-100">
+                  <div key={msg.id} className="leading-[1.4] animate-fade-in-up bg-white p-4 rounded-lg shadow-sm border border-gray-100">
                       <span className="font-black text-[#FF3D68]">{msg.user}: </span>
                       <span className="text-gray-800 font-bold">{msg.msg}</span>
-                      <span className="text-orange-500 font-bold italic text-xs block mt-1">+1 Flag Spawned</span>
+                      <span className="text-orange-500 font-bold italic text-sm block mt-1">+1 Flag Spawned</span>
                   </div>
               ))}
           </div>
