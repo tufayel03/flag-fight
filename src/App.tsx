@@ -369,6 +369,9 @@ export default function App() {
         Matter.World.add(engine.world, part);
     }
 
+    const toTitleCase = (str: string) =>
+        str.replace(/\b\w/g, (l) => l.toUpperCase());
+
     const handleWin = (winningFlag: any) => {
         gameStateRef.current.state = 'ENDED';
         setGameState('ENDED');
@@ -379,10 +382,17 @@ export default function App() {
             [winningFlag.country]: (prev[winningFlag.country] || 0) + 1
         }));
 
-        if ('speechSynthesis' in window) {
-            const utterance = new SpeechSynthesisUtterance(`${winningFlag.country} wins!`);
-            window.speechSynthesis.speak(utterance);
-        }
+        // Delay speech so it fires outside the physics engine callback
+        setTimeout(() => {
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel(); // clear any queued speech
+                const utterance = new SpeechSynthesisUtterance(`${toTitleCase(winningFlag.country)} wins!`);
+                utterance.rate = 0.95;
+                utterance.pitch = 1.1;
+                utterance.volume = 1;
+                window.speechSynthesis.speak(utterance);
+            }
+        }, 200);
 
         setTimeout(() => {
             gameStateRef.current.flags.forEach(f => Matter.World.remove(engine.world, f.body));
@@ -399,10 +409,16 @@ export default function App() {
         setGameState('ENDED');
         setWinner({ country: 'Nobody', emoji: '🏳️' });
 
-        if ('speechSynthesis' in window) {
-            const utterance = new SpeechSynthesisUtterance(`It's a draw!`);
-            window.speechSynthesis.speak(utterance);
-        }
+        setTimeout(() => {
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+                const utterance = new SpeechSynthesisUtterance(`It's a draw!`);
+                utterance.rate = 0.95;
+                utterance.pitch = 1.1;
+                utterance.volume = 1;
+                window.speechSynthesis.speak(utterance);
+            }
+        }, 200);
 
         setTimeout(() => {
             gameStateRef.current.flags.forEach(f => Matter.World.remove(engine.world, f.body));
@@ -893,7 +909,7 @@ export default function App() {
                       ) : (
                           winner.emoji
                       )}
-                      {winner.country}
+                      {winner.country.replace(/\b\w/g, (l) => l.toUpperCase())}
                   </div>
               </div>
           )}
