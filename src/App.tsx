@@ -89,6 +89,10 @@ export default function App() {
   const [streamKey, setStreamKey] = useState('');
   const [streamUrl, setStreamUrl] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [isStreaming, setIsStreaming] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const audioDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -130,6 +134,11 @@ export default function App() {
 
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
+      
+      if (!audioDestRef.current) {
+          audioDestRef.current = ctx.createMediaStreamDestination();
+      }
+
       osc.type = 'sine';
       osc.frequency.setValueAtTime(400, ctx.currentTime);
       osc.frequency.exponentialRampToValueAtTime(600, ctx.currentTime + 0.1);
@@ -139,8 +148,79 @@ export default function App() {
       
       osc.connect(gain);
       gain.connect(ctx.destination);
+      gain.connect(audioDestRef.current);
       osc.start();
       osc.stop(ctx.currentTime + 0.1);
+  };
+
+  const toggleStream = () => {
+      if (isStreaming) {
+          if (mediaRecorderRef.current) {
+              mediaRecorderRef.current.stop();
+          }
+          if (wsRef.current) {
+              wsRef.current.close();
+          }
+          setIsStreaming(false);
+          return;
+      }
+
+      if (!streamUrl || !streamKey) {
+          alert('Please provide Stream URL and Stream Key in the login screen.');
+          return;
+      }
+
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      // Initialize audio context if not already
+      if (!audioCtxRef.current) {
+          audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      if (!audioDestRef.current) {
+          audioDestRef.current = audioCtxRef.current.createMediaStreamDestination();
+      }
+
+      const canvasStream = canvas.captureStream(30);
+      const audioStream = audioDestRef.current.stream;
+      const combinedStream = new MediaStream([
+          ...canvasStream.getVideoTracks(),
+          ...audioStream.getAudioTracks()
+      ]);
+
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}`;
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+          const fullRtmpUrl = streamUrl.endsWith('/') ? `${streamUrl}${streamKey}` : `${streamUrl}/${streamKey}`;
+          ws.send(JSON.stringify({ type: 'start', rtmpUrl: fullRtmpUrl }));
+
+          const mediaRecorder = new MediaRecorder(combinedStream, {
+              mimeType: 'video/webm; codecs=vp8,opus'
+          });
+
+          mediaRecorder.ondataavailable = (e) => {
+              if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+                  ws.send(e.data);
+              }
+          };
+
+          mediaRecorder.start(1000); // Send chunks every second
+          mediaRecorderRef.current = mediaRecorder;
+          setIsStreaming(true);
+      };
+
+      ws.onerror = (err) => {
+          console.error('WebSocket error:', err);
+          alert('Failed to connect to streaming server.');
+          setIsStreaming(false);
+      };
+
+      ws.onclose = () => {
+          setIsStreaming(false);
+      };
   };
 
   useEffect(() => {
@@ -283,6 +363,7 @@ export default function App() {
     Matter.Runner.run(runner, engine);
 
     const render = () => {
+        reqRef.current = requestAnimationFrame(render);
         const canvas = canvasRef.current;
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
@@ -346,8 +427,6 @@ export default function App() {
             ctx.stroke();
             ctx.restore();
         });
-
-        reqRef.current = requestAnimationFrame(render);
     };
     render();
 
@@ -533,9 +612,21 @@ export default function App() {
           <div className="font-bold text-[#FF3D68] text-sm tracking-widest uppercase">
               {gameState === 'PLAYING' ? 'Round in Progress' : gameState === 'WAITING' ? 'Waiting for Players' : 'Round Ended'}
           </div>
-          <div className="flex items-center gap-2 text-[#FF3D68] text-xs">
-              <div className="w-2 h-2 bg-[#FF3D68] rounded-full shadow-[0_0_10px_#FF3D68] animate-pulse"></div>
-              Voice Synthesis Ready
+          <div className="flex items-center gap-4">
+              <button 
+                  onClick={toggleStream}
+                  className={`px-4 py-2 rounded text-xs font-bold uppercase tracking-widest transition-colors ${
+                      isStreaming 
+                          ? 'bg-red-500 text-white animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.5)]' 
+                          : 'bg-gray-800 text-white hover:bg-gray-700'
+                  }`}
+              >
+                  {isStreaming ? 'Stop Stream' : 'Start Stream'}
+              </button>
+              <div className="flex items-center gap-2 text-[#FF3D68] text-xs">
+                  <div className="w-2 h-2 bg-[#FF3D68] rounded-full shadow-[0_0_10px_#FF3D68] animate-pulse"></div>
+                  Voice Synthesis Ready
+              </div>
           </div>
       </header>
 
