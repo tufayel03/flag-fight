@@ -119,6 +119,7 @@ export class GameEngine extends EventEmitter {
   private globalAngle = 0;
   private renderTimer: ReturnType<typeof setTimeout> | null = null;
   private gameLoopTimer: ReturnType<typeof setTimeout> | null = null;
+  private physicsTimer: ReturnType<typeof setTimeout> | null = null;
   private cleanupTimer: ReturnType<typeof setTimeout> | null = null;
   private endingRound = false;
   private lastJpeg: Buffer | null = null;
@@ -199,8 +200,12 @@ export class GameEngine extends EventEmitter {
       }
     });
 
-    const runner = Matter.Runner.create();
-    Matter.Runner.run(runner, this.engine);
+    // Drive physics manually at 60 Hz — Matter.Runner requires window.requestAnimationFrame
+    // which does not exist in Node.js. We replicate it with setInterval.
+    const fixedDelta = 1000 / 60;
+    this.physicsTimer = setInterval(() => {
+      Matter.Engine.update(this.engine, fixedDelta);
+    }, fixedDelta);
   }
 
   private endRound(flag: FlagData) {
@@ -469,6 +474,7 @@ export class GameEngine extends EventEmitter {
   destroy() {
     if (this.renderTimer) clearInterval(this.renderTimer);
     if (this.gameLoopTimer) clearInterval(this.gameLoopTimer);
+    if (this.physicsTimer) clearInterval(this.physicsTimer);
     if (this.cleanupTimer) clearInterval(this.cleanupTimer);
   }
 }
