@@ -341,7 +341,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    // Chat messages no longer disappear automatically
+    const interval = setInterval(() => {
+        const cutoff = Date.now() - 5000;
+        setChatMessages(prev => prev.filter(item => item.createdAt >= cutoff));
+    }, 500);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -461,8 +465,18 @@ export default function App() {
             const dist = Math.sqrt(dx*dx + dy*dy);
 
             if (dist > radius + 30) {
-                Matter.World.remove(engine.world, flag.body);
-                flags.splice(i, 1);
+                if (currentState === 'PLAYING') {
+                    // Eliminate flag only during active game
+                    Matter.World.remove(engine.world, flag.body);
+                    flags.splice(i, 1);
+                } else {
+                    // During WAITING/COUNTDOWN: bounce flag back to center
+                    Matter.Body.setPosition(flag.body, { x: center.x, y: center.y });
+                    Matter.Body.setVelocity(flag.body, {
+                        x: (Math.random() - 0.5) * flagInitialSpeed,
+                        y: (Math.random() - 0.5) * flagInitialSpeed
+                    });
+                }
             }
         }
 
@@ -556,7 +570,7 @@ export default function App() {
         if (state === 'WAITING' && flags.length >= 2) {
             setGameState('COUNTDOWN');
             gameStateRef.current.state = 'COUNTDOWN';
-            setCountdown(10);
+            setCountdown(3);
         } else if (state === 'COUNTDOWN') {
             setCountdown(c => {
                 if (c <= 1) {
@@ -888,7 +902,7 @@ export default function App() {
       <aside className="bg-gray-50/80 p-6 pl-0 border-l border-gray-200 flex flex-col min-h-0 overflow-hidden">
           <div className="text-lg font-black uppercase tracking-widest text-gray-800 mb-5 border-b border-gray-200 pb-2 pl-6">Live Chat Spawns</div>
           <div className="flex-1 min-h-0 overflow-hidden pl-6 pr-4">
-              <div className="flex flex-col-reverse gap-3 text-lg leading-[1.35]">
+              <div className="flex flex-col gap-3 text-lg leading-[1.35]">
                   {[...chatMessages].reverse().map(msg => (
                   <div key={msg.id} className="animate-fade-in-up border-b border-gray-200 pb-3">
                       <span className="font-black text-[#FF3D68]">{msg.user}: </span>
