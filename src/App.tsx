@@ -181,8 +181,7 @@ export default function App() {
       };
 
       setChatMessages(prev => {
-          const activeMessages = prev.filter(item => createdAt - item.createdAt < chatMessageLifetimeMs);
-          return [...activeMessages, nextMessage].slice(-maxVisibleChatMessages);
+          return [...prev, nextMessage].slice(-50);
       });
   };
 
@@ -342,11 +341,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const interval = setInterval(() => {
-        const cutoff = Date.now() - chatMessageLifetimeMs;
-        setChatMessages(prev => prev.filter(item => item.createdAt >= cutoff));
-    }, 500);
-    return () => clearInterval(interval);
+    // Chat messages no longer disappear automatically
   }, []);
 
   useEffect(() => {
@@ -516,7 +511,7 @@ export default function App() {
             ctx.arc(0, 0, 40, 0, Math.PI * 2);
             ctx.clip();
 
-            if (flag.img && flag.img.complete) {
+            if (flag.img && flag.img.complete && flag.img.naturalWidth > 0) {
                 // Draw image to cover the 80x80 area (maintaining 4:3)
                 ctx.drawImage(flag.img, -60, -45, 120, 90);
             } else {
@@ -693,22 +688,7 @@ export default function App() {
     };
   }, [isLoggedIn, youtubeApiKey, youtubeVideoId]);
 
-  // Auto-simulate chat (Fallback)
-  useEffect(() => {
-    if (!isLoggedIn || (youtubeApiKey && youtubeVideoId)) return;
-    const interval = setInterval(() => {
-        if (gameStateRef.current.state !== 'ENDED' && Math.random() > 0.6) {
-            const countryKeys = Object.keys(COUNTRIES);
-            const randomCountry = countryKeys[Math.floor(Math.random() * countryKeys.length)];
-            const users = ['Gamer123', 'FlagFan', 'Speedy', 'Ninja', 'ProPlayer'];
-            const randomUser = users[Math.floor(Math.random() * users.length)];
-            
-            addChatMessage(randomUser, randomCountry);
-            spawnFlag(randomCountry);
-        }
-    }, 1500);
-    return () => clearInterval(interval);
-  }, [isLoggedIn]);
+  // Removed auto-simulate chat (Fallback) mock data
 
   if (!isLoggedIn) {
     return (
