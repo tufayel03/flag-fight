@@ -85,10 +85,32 @@ function stopYouTubePolling() {
 }
 
 // ─── FFmpeg stream management ──────────────────────────────────────────────────
-function startStream(rtmpUrl: string) {
+import { lookup } from "dns";
+import { promisify } from "util";
+const dnsLookup = promisify(lookup);
+
+async function resolveRtmpUrl(rtmpUrl: string): Promise<string> {
+  try {
+    const url = new URL(rtmpUrl);
+    const { address } = await dnsLookup(url.hostname, 4);
+    console.log(`Resolved ${url.hostname} → ${address}`);
+    url.hostname = address;
+    return url.toString();
+  } catch (e) {
+    console.warn("DNS pre-resolve failed, using original URL:", e);
+    return rtmpUrl;
+  }
+}
+
+async function startStream(rtmpUrl: string) {
   if (ffmpegProc) { stopStream(); }
 
   storedRtmpUrl = rtmpUrl;
+
+  // Pre-resolve hostname so ffmpeg-static (static musl binary) doesn't hit
+  // systemd-resolved DNS stub (127.0.0.53) which static binaries can't use
+  const resolvedUrl = await resolveRtmpUrl(rtmpUrl);
+  console.log("Streaming to:", resolvedUrl);
 
   const args = [
     "-f", "image2pipe",
@@ -109,7 +131,7 @@ function startStream(rtmpUrl: string) {
     "-map", "0:v",
     "-map", "1:a",
     "-f", "flv",
-    rtmpUrl,
+    resolvedUrl,
   ];
 
   ffmpegProc = spawn(ffmpegPath, args);
