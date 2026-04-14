@@ -88,11 +88,15 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [streamKey, setStreamKey] = useState('');
   const [streamUrl, setStreamUrl] = useState('');
+  const [youtubeApiKey, setYoutubeApiKey] = useState('');
+  const [youtubeVideoId, setYoutubeVideoId] = useState('');
   const [loginError, setLoginError] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const audioDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+  const liveChatIdRef = useRef<string | null>(null);
+  const nextPageTokenRef = useRef<string | null>(null);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -244,13 +248,6 @@ export default function App() {
         Matter.World.add(engine.world, part);
     }
 
-    // Add a central peg to bounce off
-    const centerPeg = Matter.Bodies.circle(center.x, center.y, 10, {
-        isStatic: true,
-        restitution: 1,
-    });
-    Matter.World.add(engine.world, centerPeg);
-
     const handleWin = (winningFlag: any) => {
         gameStateRef.current.state = 'ENDED';
         setGameState('ENDED');
@@ -384,12 +381,6 @@ export default function App() {
             ctx.fill();
         });
 
-        // Draw center peg
-        ctx.beginPath();
-        ctx.arc(center.x, center.y, 10, 0, Math.PI * 2);
-        ctx.fillStyle = '#D1D5DB';
-        ctx.fill();
-
         // Draw flags
         gameStateRef.current.flags.forEach(flag => {
             ctx.save();
@@ -511,9 +502,75 @@ export default function App() {
     setChatInput('');
   };
 
-  // Auto-simulate chat
+  // YouTube Live Chat Polling
   useEffect(() => {
-    if (!isLoggedIn) return;
+    if (!isLoggedIn || !youtubeApiKey || !youtubeVideoId) return;
+
+    let isPolling = true;
+    let pollTimeout: any;
+
+    const fetchLiveChatId = async () => {
+        try {
+            const res = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${youtubeVideoId}&key=${youtubeApiKey}`);
+            const data = await res.json();
+            if (data.items && data.items.length > 0 && data.items[0].liveStreamingDetails) {
+                liveChatIdRef.current = data.items[0].liveStreamingDetails.activeLiveChatId;
+                pollChat();
+            } else {
+                console.error("No active live stream found for this video ID.");
+            }
+        } catch (e) {
+            console.error("Error fetching live chat ID", e);
+        }
+    };
+
+    const pollChat = async () => {
+        if (!isPolling || !liveChatIdRef.current) return;
+        try {
+            let url = `https://www.googleapis.com/youtube/v3/liveChat/messages?liveChatId=${liveChatIdRef.current}&part=snippet,authorDetails&key=${youtubeApiKey}`;
+            if (nextPageTokenRef.current) {
+                url += `&pageToken=${nextPageTokenRef.current}`;
+            }
+            const res = await fetch(url);
+            const data = await res.json();
+
+            if (data.items && data.items.length > 0) {
+                const sortedCountries = Object.keys(COUNTRIES).sort((a, b) => b.length - a.length);
+                
+                data.items.forEach((item: any) => {
+                    const msg = item.snippet.displayMessage.toLowerCase();
+                    const author = item.authorDetails.displayName;
+                    
+                    const matchedCountry = sortedCountries.find(c => msg.includes(c));
+                    
+                    if (matchedCountry) {
+                        setChatMessages(prev => [...prev.slice(-19), { id: Math.random(), user: author, msg: matchedCountry }]);
+                        spawnFlag(matchedCountry);
+                    }
+                });
+            }
+
+            nextPageTokenRef.current = data.nextPageToken;
+            const nextPoll = data.pollingIntervalMillis || 5000;
+            pollTimeout = setTimeout(pollChat, nextPoll);
+
+        } catch (e) {
+            console.error("Error polling chat", e);
+            pollTimeout = setTimeout(pollChat, 5000);
+        }
+    };
+
+    fetchLiveChatId();
+
+    return () => {
+        isPolling = false;
+        clearTimeout(pollTimeout);
+    };
+  }, [isLoggedIn, youtubeApiKey, youtubeVideoId]);
+
+  // Auto-simulate chat (Fallback)
+  useEffect(() => {
+    if (!isLoggedIn || (youtubeApiKey && youtubeVideoId)) return;
     const interval = setInterval(() => {
         if (gameStateRef.current.state !== 'ENDED' && Math.random() > 0.6) {
             const countryKeys = Object.keys(COUNTRIES);
@@ -565,6 +622,33 @@ export default function App() {
                 placeholder="admin123"
                 required
               />
+            </div>
+
+            <div className="pt-4 border-t border-gray-100 mt-6">
+              <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4">YouTube Live Chat Settings</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">YouTube API Key</label>
+                  <input 
+                    type="password" 
+                    value={youtubeApiKey}
+                    onChange={(e) => setYoutubeApiKey(e.target.value)}
+                    className="w-full bg-gray-50 border border-gray-300 text-gray-900 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-[#FF3D68] focus:ring-1 focus:ring-[#FF3D68]"
+                    placeholder="AIzaSy..."
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">YouTube Video ID</label>
+                  <input 
+                    type="text" 
+                    value={youtubeVideoId}
+                    onChange={(e) => setYoutubeVideoId(e.target.value)}
+                    className="w-full bg-gray-50 border border-gray-300 text-gray-900 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-[#FF3D68] focus:ring-1 focus:ring-[#FF3D68]"
+                    placeholder="dQw4w9WgXcQ"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1">Leave these blank to use simulated chat.</p>
+                </div>
+              </div>
             </div>
 
             <div className="pt-4 border-t border-gray-100 mt-6">
