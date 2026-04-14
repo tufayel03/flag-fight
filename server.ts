@@ -2,14 +2,11 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import { WebSocketServer } from "ws";
 import http from "http";
-import ffmpeg from "fluent-ffmpeg";
+import { spawn, ChildProcessWithoutNullStreams } from "child_process";
 import ffmpegStatic from "ffmpeg-static";
 import path from "path";
 
-// Set the path to the ffmpeg binary
-if (ffmpegStatic) {
-  ffmpeg.setFfmpegPath(ffmpegStatic);
-}
+const ffmpegPath = ffmpegStatic as string;
 
 async function startServer() {
   const app = express();
@@ -23,7 +20,7 @@ async function startServer() {
 
   wss.on("connection", (ws) => {
     console.log("Client connected to WebSocket");
-    let ffmpegCommand: ffmpeg.FfmpegCommand | null = null;
+    let ffmpegProc: ChildProcessWithoutNullStreams | null = null;
 
     ws.on("message", (message, isBinary) => {
       if (!isBinary) {
@@ -32,50 +29,56 @@ async function startServer() {
           if (data.type === "start" && data.rtmpUrl) {
             console.log("Starting FFmpeg stream to:", data.rtmpUrl);
 
-            // Initialize FFmpeg
-            ffmpegCommand = ffmpeg()
-              .input("pipe:0") // Read from stdin
-              .inputFormat("webm") // Expect webm from MediaRecorder
-              // Video settings
-              .videoCodec("libx264")
-              .outputOptions([
-                "-preset veryfast",
-                "-maxrate 2500k",
-                "-bufsize 5000k",
-                "-pix_fmt yuv420p",
-                "-g 60", // Keyframe interval (2 seconds at 30fps)
-              ])
-              // Audio settings
-              .audioCodec("aac")
-              .audioBitrate("128k")
-              .audioChannels(2)
-              // Output format for RTMP
-              .format("flv")
-              .output(data.rtmpUrl)
-              .on("start", (cmd) => {
-                console.log("FFmpeg started:", cmd);
-              })
-              .on("error", (err) => {
-                console.error("FFmpeg error:", err.message);
-              })
-              .on("end", () => {
-                console.log("FFmpeg stream ended");
-              });
+            const args = [
+              "-f", "webm",
+              "-i", "pipe:0",
+              "-acodec", "aac",
+              "-b:a", "128k",
+              "-ac", "2",
+              "-vcodec", "libx264",
+              "-preset", "veryfast",
+              "-maxrate", "2500k",
+              "-bufsize", "5000k",
+              "-pix_fmt", "yuv420p",
+              "-g", "60",
+              "-f", "flv",
+              data.rtmpUrl,
+            ];
 
-            // Start processing
-            ffmpegCommand.run();
+            ffmpegProc = spawn(ffmpegPath, args);
+
+            // ✅ CRITICAL: Add error handler so stdin write errors don't crash Node
+            ffmpegProc.stdin.on("error", (err) => {
+              console.error("FFmpeg stdin error (stream likely ended):", err.message);
+            });
+
+            // Log FFmpeg output so you can debug issues
+            ffmpegProc.stderr.on("data", (chunk) => {
+              process.stderr.write("[ffmpeg] " + chunk.toString());
+            });
+
+            ffmpegProc.on("close", (code) => {
+              console.log(`FFmpeg process exited with code ${code}`);
+              ffmpegProc = null;
+            });
+
+            ffmpegProc.on("error", (err) => {
+              console.error("FFmpeg process error:", err.message);
+              ffmpegProc = null;
+            });
+
+            console.log("FFmpeg started with args:", args.join(" "));
           }
         } catch (e) {
           console.error("Error parsing WebSocket message:", e);
         }
       } else {
-        // Binary data (video chunks)
-        if (ffmpegCommand) {
-          // Write the chunk to FFmpeg's stdin
-          // @ts-ignore - fluent-ffmpeg types don't explicitly expose the stdin stream, but it's there
-          if (ffmpegCommand.ffmpegProc && ffmpegCommand.ffmpegProc.stdin) {
-            // @ts-ignore
-            ffmpegCommand.ffmpegProc.stdin.write(message);
+        // Binary data (video chunks) — write to FFmpeg stdin
+        if (ffmpegProc && ffmpegProc.stdin && !ffmpegProc.stdin.destroyed) {
+          try {
+            ffmpegProc.stdin.write(message as Buffer);
+          } catch (err: any) {
+            console.error("Error writing to FFmpeg stdin:", err.message);
           }
         }
       }
@@ -83,9 +86,13 @@ async function startServer() {
 
     ws.on("close", () => {
       console.log("Client disconnected");
-      if (ffmpegCommand) {
+      if (ffmpegProc) {
         console.log("Killing FFmpeg process");
-        ffmpegCommand.kill("SIGKILL");
+        try {
+          ffmpegProc.stdin.end();
+          ffmpegProc.kill("SIGKILL");
+        } catch (_) {}
+        ffmpegProc = null;
       }
     });
   });
