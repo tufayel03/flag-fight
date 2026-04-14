@@ -1,0 +1,88 @@
+Flag Fight - Oracle VPS Deployment Runbook
+
+Purpose
+- This file documents how Flag Fight is deployed so future updates can be done safely.
+- Do not store plaintext passwords or private keys in this file.
+
+Production access
+- VPS provider: Oracle Cloud VPS
+- VPS IP: 168.138.115.223
+- SSH user: ubuntu
+- SSH private key on this PC: C:\Users\ashar\Documents\sshkey.key
+- SSH command:
+  ssh -i "C:\Users\ashar\Documents\sshkey.key" ubuntu@168.138.115.223
+- CloudPanel site user: flagfight
+- CloudPanel app root / htdocs:
+  /home/flagfight/htdocs/flagfight.bidnsteal.com
+- Git clone cache used for deployment:
+  /home/flagfight/repo/flag-fight
+- Git repository:
+  https://github.com/tufayel03/flag-fight.git
+- Branch:
+  main
+- Node version on VPS:
+  /home/flagfight/.nvm/versions/node/v22.22.2/bin/node
+- App port:
+  3002  (bidnsteal uses 3000, do NOT use 3000)
+- systemd service:
+  flagfight.service
+
+Live URL
+- https://flagfight.bidnsteal.com
+
+IMPORTANT
+- There are 4 other sites on this VPS. Do NOT touch them.
+- Other services and ports in use: 3000 (bidnsteal), 3100, 3101, 5000
+- Always use port 3002 for this app.
+
+How deployment is structured
+- The CloudPanel htdocs folder is NOT the Git working folder.
+- Do not run git pull inside /home/flagfight/htdocs/flagfight.bidnsteal.com.
+- Safe deployment flow:
+  1. Pull latest code in /home/flagfight/repo/flag-fight
+  2. Install deps and build in the Git clone
+  3. rsync built repo into CloudPanel htdocs
+  4. Install production deps in htdocs
+  5. Restart flagfight.service
+  6. Check systemd status
+
+One-command deployment from this PC (run after git push)
+
+$script = @'
+set -euo pipefail
+export PATH=/home/flagfight/.nvm/versions/node/v22.22.2/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+repo=/home/flagfight/repo/flag-fight
+app=/home/flagfight/htdocs/flagfight.bidnsteal.com
+cd "$repo"
+git pull --ff-only origin main
+git rev-parse --short HEAD
+npm ci
+npm run build
+rsync -a --delete --exclude '.git/' --exclude 'node_modules/' --exclude '.env' "$repo"/ "$app"/
+chown -R flagfight:flagfight "$app"
+cd "$app"
+npm ci --omit=dev
+systemctl restart flagfight.service
+sleep 5
+systemctl is-active flagfight.service
+'@
+$tmp = New-TemporaryFile
+Set-Content -LiteralPath $tmp -Value $script -Encoding ASCII
+scp -i "C:\Users\ashar\Documents\sshkey.key" $tmp ubuntu@168.138.115.223:/tmp/flagfight_deploy.sh
+ssh -i "C:\Users\ashar\Documents\sshkey.key" ubuntu@168.138.115.223 "sudo -n bash /tmp/flagfight_deploy.sh"
+Remove-Item -LiteralPath $tmp
+
+Health checks and logs
+- Check service:
+  ssh -i "C:\Users\ashar\Documents\sshkey.key" ubuntu@168.138.115.223 "sudo systemctl status flagfight.service --no-pager"
+- Check logs:
+  ssh -i "C:\Users\ashar\Documents\sshkey.key" ubuntu@168.138.115.223 "sudo journalctl -u flagfight.service -n 100 --no-pager"
+- Check live site:
+  curl -I https://flagfight.bidnsteal.com
+
+Common fixes
+- If Git reports dubious ownership:
+  sudo git config --global --add safe.directory /home/flagfight/repo/flag-fight
+- If service won't start, check logs with journalctl command above.
+- tsx is located at:
+  /home/flagfight/htdocs/flagfight.bidnsteal.com/node_modules/.bin/tsx
