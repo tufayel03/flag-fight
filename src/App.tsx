@@ -29,7 +29,7 @@ const COUNTRIES: Record<string, { code: string, emoji: string }> = {
   "haiti": { code: "ht", emoji: "🇭🇹" }, "honduras": { code: "hn", emoji: "🇭🇳" }, "hungary": { code: "hu", emoji: "🇭🇺" },
   "iceland": { code: "is", emoji: "🇮🇸" }, "india": { code: "in", emoji: "🇮🇳" }, "indonesia": { code: "id", emoji: "🇮🇩" },
   "iran": { code: "ir", emoji: "🇮🇷" }, "iraq": { code: "iq", emoji: "🇮🇶" }, "ireland": { code: "ie", emoji: "🇮🇪" },
-  "israel": { code: "il", emoji: "🇮🇱" }, "italy": { code: "it", emoji: "🇮🇹" }, "jamaica": { code: "jm", emoji: "🇯🇲" },
+  "italy": { code: "it", emoji: "🇮🇹" }, "jamaica": { code: "jm", emoji: "🇯🇲" },
   "japan": { code: "jp", emoji: "🇯🇵" }, "jordan": { code: "jo", emoji: "🇯🇴" }, "kazakhstan": { code: "kz", emoji: "🇰🇿" },
   "kenya": { code: "ke", emoji: "🇰🇪" }, "kiribati": { code: "ki", emoji: "🇰🇮" }, "kuwait": { code: "kw", emoji: "🇰🇼" },
   "kyrgyzstan": { code: "kg", emoji: "🇰🇬" }, "laos": { code: "la", emoji: "🇱🇦" }, "latvia": { code: "lv", emoji: "🇱🇻" },
@@ -94,6 +94,7 @@ export default function App() {
   const [isStreaming, setIsStreaming] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const displayStreamRef = useRef<MediaStream | null>(null);
   const audioDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
   const liveChatIdRef = useRef<string | null>(null);
   const nextPageTokenRef = useRef<string | null>(null);
@@ -157,15 +158,31 @@ export default function App() {
       osc.stop(ctx.currentTime + 0.1);
   };
 
-  const toggleStream = () => {
+  const stopStreamingSession = () => {
+      const recorder = mediaRecorderRef.current;
+      mediaRecorderRef.current = null;
+      if (recorder && recorder.state !== 'inactive') {
+          recorder.stop();
+      }
+
+      const ws = wsRef.current;
+      wsRef.current = null;
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+          ws.close();
+      }
+
+      const displayStream = displayStreamRef.current;
+      displayStreamRef.current = null;
+      if (displayStream) {
+          displayStream.getTracks().forEach(track => track.stop());
+      }
+
+      setIsStreaming(false);
+  };
+
+  const toggleStream = async () => {
       if (isStreaming) {
-          if (mediaRecorderRef.current) {
-              mediaRecorderRef.current.stop();
-          }
-          if (wsRef.current) {
-              wsRef.current.close();
-          }
-          setIsStreaming(false);
+          stopStreamingSession();
           return;
       }
 
@@ -173,9 +190,6 @@ export default function App() {
           alert('Please provide Stream URL and Stream Key in the login screen.');
           return;
       }
-
-      const canvas = canvasRef.current;
-      if (!canvas) return;
 
       // Initialize audio context if not already
       if (!audioCtxRef.current) {
@@ -185,10 +199,48 @@ export default function App() {
           audioDestRef.current = audioCtxRef.current.createMediaStreamDestination();
       }
 
-      const canvasStream = canvas.captureStream(30);
+      if (!navigator.mediaDevices?.getDisplayMedia) {
+          alert('This browser does not support full-tab capture for streaming.');
+          return;
+      }
+
+      let displayStream: MediaStream;
+      try {
+          displayStream = await navigator.mediaDevices.getDisplayMedia({
+              video: {
+                  frameRate: 30,
+                  width: { ideal: 1920 },
+                  height: { ideal: 1080 }
+              },
+              audio: false,
+              preferCurrentTab: true,
+              selfBrowserSurface: 'include',
+              surfaceSwitching: 'exclude'
+          } as MediaStreamConstraints & {
+              preferCurrentTab?: boolean;
+              selfBrowserSurface?: 'include' | 'exclude';
+              surfaceSwitching?: 'include' | 'exclude';
+          });
+      } catch (error) {
+          console.error('Display capture was cancelled or failed:', error);
+          return;
+      }
+
+      const videoTrack = displayStream.getVideoTracks()[0];
+      if (!videoTrack) {
+          displayStream.getTracks().forEach(track => track.stop());
+          alert('No video track was provided by screen capture.');
+          return;
+      }
+
+      displayStreamRef.current = displayStream;
+      videoTrack.addEventListener('ended', () => {
+          stopStreamingSession();
+      }, { once: true });
+
       const audioStream = audioDestRef.current.stream;
       const combinedStream = new MediaStream([
-          ...canvasStream.getVideoTracks(),
+          videoTrack,
           ...audioStream.getAudioTracks()
       ]);
 
@@ -201,13 +253,24 @@ export default function App() {
           const fullRtmpUrl = streamUrl.endsWith('/') ? `${streamUrl}${streamKey}` : `${streamUrl}/${streamKey}`;
           ws.send(JSON.stringify({ type: 'start', rtmpUrl: fullRtmpUrl }));
 
-          const mediaRecorder = new MediaRecorder(combinedStream, {
-              mimeType: 'video/webm; codecs=vp8,opus'
-          });
+          const mimeType = [
+              'video/webm; codecs=vp9,opus',
+              'video/webm; codecs=vp8,opus',
+              'video/webm'
+          ].find(type => MediaRecorder.isTypeSupported(type));
+          const mediaRecorder = mimeType
+              ? new MediaRecorder(combinedStream, { mimeType })
+              : new MediaRecorder(combinedStream);
 
           mediaRecorder.ondataavailable = (e) => {
               if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
                   ws.send(e.data);
+              }
+          };
+
+          mediaRecorder.onstop = () => {
+              if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+                  ws.close();
               }
           };
 
@@ -219,13 +282,36 @@ export default function App() {
       ws.onerror = (err) => {
           console.error('WebSocket error:', err);
           alert('Failed to connect to streaming server.');
-          setIsStreaming(false);
+          stopStreamingSession();
       };
 
       ws.onclose = () => {
+          displayStream.getTracks().forEach(track => track.stop());
+          displayStreamRef.current = null;
+          mediaRecorderRef.current = null;
+          wsRef.current = null;
           setIsStreaming(false);
       };
   };
+
+  useEffect(() => {
+    return () => {
+        const recorder = mediaRecorderRef.current;
+        if (recorder && recorder.state !== 'inactive') {
+            recorder.stop();
+        }
+
+        const ws = wsRef.current;
+        if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+            ws.close();
+        }
+
+        const displayStream = displayStreamRef.current;
+        if (displayStream) {
+            displayStream.getTracks().forEach(track => track.stop());
+        }
+    };
+  }, []);
 
   useEffect(() => {
     const engine = Matter.Engine.create();
@@ -603,8 +689,8 @@ export default function App() {
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">Email</label>
-              <input 
-                type="email" 
+              <input
+                type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full bg-gray-50 border border-gray-300 text-gray-900 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-[#FF3D68] focus:ring-1 focus:ring-[#FF3D68]"
@@ -614,8 +700,8 @@ export default function App() {
             </div>
             <div>
               <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">Password</label>
-              <input 
-                type="password" 
+              <input
+                type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full bg-gray-50 border border-gray-300 text-gray-900 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-[#FF3D68] focus:ring-1 focus:ring-[#FF3D68]"
@@ -629,8 +715,8 @@ export default function App() {
               <div className="space-y-4">
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">YouTube API Key</label>
-                  <input 
-                    type="password" 
+                  <input
+                    type="password"
                     value={youtubeApiKey}
                     onChange={(e) => setYoutubeApiKey(e.target.value)}
                     className="w-full bg-gray-50 border border-gray-300 text-gray-900 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-[#FF3D68] focus:ring-1 focus:ring-[#FF3D68]"
@@ -639,8 +725,8 @@ export default function App() {
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">YouTube Video ID</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     value={youtubeVideoId}
                     onChange={(e) => setYoutubeVideoId(e.target.value)}
                     className="w-full bg-gray-50 border border-gray-300 text-gray-900 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-[#FF3D68] focus:ring-1 focus:ring-[#FF3D68]"
@@ -656,8 +742,8 @@ export default function App() {
               <div className="space-y-4">
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">Stream URL</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     value={streamUrl}
                     onChange={(e) => setStreamUrl(e.target.value)}
                     className="w-full bg-gray-50 border border-gray-300 text-gray-900 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-[#FF3D68] focus:ring-1 focus:ring-[#FF3D68]"
@@ -666,8 +752,8 @@ export default function App() {
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">Stream Key</label>
-                  <input 
-                    type="password" 
+                  <input
+                    type="password"
                     value={streamKey}
                     onChange={(e) => setStreamKey(e.target.value)}
                     className="w-full bg-gray-50 border border-gray-300 text-gray-900 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-[#FF3D68] focus:ring-1 focus:ring-[#FF3D68]"
@@ -677,8 +763,8 @@ export default function App() {
               </div>
             </div>
 
-            <button 
-              type="submit" 
+            <button
+              type="submit"
               className="w-full bg-[#FF3D68] text-white font-black uppercase tracking-widest py-4 rounded-lg mt-8 hover:bg-[#e0355b] transition-colors shadow-md"
             >
               Login & Start Game
