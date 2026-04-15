@@ -38,6 +38,16 @@ export default function App() {
   const [youtubeApiKey, setYoutubeApiKey] = useState('');
   const [youtubeVideoId, setYoutubeVideoId] = useState('');
 
+  // Refs so closures always see latest values
+  const streamUrlRef = useRef(streamUrl);
+  const streamKeyRef = useRef(streamKey);
+  const youtubeApiKeyRef = useRef(youtubeApiKey);
+  const youtubeVideoIdRef = useRef(youtubeVideoId);
+  useEffect(() => { streamUrlRef.current = streamUrl; }, [streamUrl]);
+  useEffect(() => { streamKeyRef.current = streamKey; }, [streamKey]);
+  useEffect(() => { youtubeApiKeyRef.current = youtubeApiKey; }, [youtubeApiKey]);
+  useEffect(() => { youtubeVideoIdRef.current = youtubeVideoId; }, [youtubeVideoId]);
+
   // Game state (from server)
   const [game, setGame] = useState<GameState>(DEFAULT_STATE);
 
@@ -74,12 +84,6 @@ export default function App() {
           if (msg.success) {
             setIsLoggedIn(true);
             setLoginError('');
-            // Send credentials to server
-            ws.send(JSON.stringify({
-              type: 'setCredentials',
-              youtubeApiKey,
-              youtubeVideoId,
-            }));
           } else {
             setLoginError('Invalid email or password');
           }
@@ -107,13 +111,27 @@ export default function App() {
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     send({ type: 'login', email, password });
+    // Also send credentials now while values are fresh (avoids stale closure)
+    send({
+      type: 'setCredentials',
+      youtubeApiKey: youtubeApiKeyRef.current,
+      youtubeVideoId: youtubeVideoIdRef.current,
+    });
   };
 
   const handleToggleStream = () => {
     if (game.isStreaming) {
       send({ type: 'stopStream' });
     } else {
-      const fullRtmpUrl = streamUrl.endsWith('/') ? `${streamUrl}${streamKey}` : `${streamUrl}/${streamKey}`;
+      const url = streamUrlRef.current;
+      const key = streamKeyRef.current;
+      const fullRtmpUrl = url.endsWith('/') ? `${url}${key}` : `${url}/${key}`;
+      // Re-send credentials in case they changed since login
+      send({
+        type: 'setCredentials',
+        youtubeApiKey: youtubeApiKeyRef.current,
+        youtubeVideoId: youtubeVideoIdRef.current,
+      });
       send({ type: 'startStream', rtmpUrl: fullRtmpUrl });
     }
   };

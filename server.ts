@@ -255,10 +255,15 @@ async function startServer() {
           }
 
           case "setCredentials": {
-            ytApiKey = msg.youtubeApiKey || "";
-            ytVideoId = msg.youtubeVideoId || "";
-            console.log("Credentials stored. YT API key set:", !!ytApiKey);
+            ytApiKey = (msg.youtubeApiKey || "").trim();
+            ytVideoId = (msg.youtubeVideoId || "").trim();
+            console.log("Credentials stored. YT API key set:", !!ytApiKey, "| VideoId:", ytVideoId || "(none)");
             ws.send(JSON.stringify({ type: "credentialsOk" }));
+            // If stream is already running, kick off YouTube polling now
+            if (isStreaming && ytApiKey && ytVideoId && !ytChatId) {
+              console.log("Stream is live — starting YouTube polling with new credentials");
+              startYouTubePolling();
+            }
             break;
           }
 
