@@ -411,16 +411,16 @@ export class GameEngine extends EventEmitter {
       ctx.fillText("✍️  Still accepting players — type your country!", CENTER_X, bY + 28);
     }
     if (this.gameState === "ENDED" && this.winner) {
-      ctx.fillStyle = "rgba(0,0,0,0.55)";
-      ctx.fillRect(GAME_X, GAME_Y + GAME_SIZE - 80, GAME_SIZE, 80);
+      ctx.fillStyle = "rgba(0,0,0,0.65)";
+      ctx.fillRect(GAME_X, GAME_Y + GAME_SIZE - 110, GAME_SIZE, 110);
       ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 14px sans-serif";
+      ctx.font = "bold 16px sans-serif";
       ctx.textAlign = "center";
-      ctx.fillText("WINNER", CENTER_X, GAME_Y + GAME_SIZE - 48);
-      ctx.font = "bold 36px sans-serif";
+      ctx.fillText("🏆  THE WINNER IS  🏆", CENTER_X, GAME_Y + GAME_SIZE - 75);
+      ctx.font = "bold 42px sans-serif";
       ctx.fillStyle = "#FF3D68";
       const name = this.winner.country.replace(/\b\w/g, (l) => l.toUpperCase());
-      ctx.fillText(name, CENTER_X, GAME_Y + GAME_SIZE - 12);
+      ctx.fillText(name, CENTER_X, GAME_Y + GAME_SIZE - 25);
     }
 
     // ── Header bar ──

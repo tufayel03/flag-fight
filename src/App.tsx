@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Send } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -57,6 +57,44 @@ export default function App() {
 
   const wsRef = useRef<WebSocket | null>(null);
 
+  // ─── Audio context for bounce beep ───────────────────────────────────────────
+  const audioCtxRef = useRef<AudioContext | null>(null);
+
+  const playBounceBeep = useCallback(() => {
+    try {
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new AudioContext();
+      }
+      const ctx = audioCtxRef.current;
+      if (ctx.state === 'suspended') ctx.resume();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(440, ctx.currentTime);
+      gain.gain.setValueAtTime(0.35, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.12);
+    } catch (_) {}
+  }, []);
+
+  // ─── Speech synthesis winner announcement ─────────────────────────────────────
+  const prevGameStateRef = useRef<string>('WAITING');
+  const announceWinner = useCallback((country: string) => {
+    if (!('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(
+      `The winner is ${country}`
+    );
+    utter.lang = 'en-US';
+    utter.rate = 0.95;
+    utter.pitch = 1.1;
+    utter.volume = 1;
+    window.speechSynthesis.speak(utter);
+  }, []);
+
   // ─── WebSocket connection ─────────────────────────────────────────────────
   useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -70,15 +108,30 @@ export default function App() {
       const msg = JSON.parse(e.data);
       switch (msg.type) {
         case 'state':
-          setGame({
-            gameState: msg.gameState,
-            countdown: msg.countdown,
-            flagCount: msg.flagCount,
-            leaderboard: msg.leaderboard || {},
-            chatMessages: msg.chatMessages || [],
-            winner: msg.winner,
-            isStreaming: msg.isStreaming,
+          setGame(prev => {
+            // Announce winner when transitioning into ENDED state
+            if (
+              prevGameStateRef.current !== 'ENDED' &&
+              msg.gameState === 'ENDED' &&
+              msg.winner
+            ) {
+              const country = msg.winner.country.replace(/\b\w/g, (l: string) => l.toUpperCase());
+              announceWinner(country);
+            }
+            prevGameStateRef.current = msg.gameState;
+            return {
+              gameState: msg.gameState,
+              countdown: msg.countdown,
+              flagCount: msg.flagCount,
+              leaderboard: msg.leaderboard || {},
+              chatMessages: msg.chatMessages || [],
+              winner: msg.winner,
+              isStreaming: msg.isStreaming,
+            };
           });
+          break;
+        case 'bounce':
+          playBounceBeep();
           break;
         case 'loginResult':
           if (msg.success) {
@@ -168,13 +221,13 @@ export default function App() {
               <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">Email</label>
               <input type="email" value={email} onChange={e => setEmail(e.target.value)}
                 className="w-full bg-gray-50 border border-gray-300 text-gray-900 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-[#FF3D68]"
-                placeholder="admin@admin.com" required />
+                placeholder="admin@bidnsteal.com" required />
             </div>
             <div>
               <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">Password</label>
               <input type="password" value={password} onChange={e => setPassword(e.target.value)}
                 className="w-full bg-gray-50 border border-gray-300 text-gray-900 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-[#FF3D68]"
-                placeholder="admin123" required />
+                placeholder="••••••••••" required />
             </div>
 
             <div className="pt-4 border-t border-gray-100 mt-6">

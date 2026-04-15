@@ -283,6 +283,11 @@ gameEngine.on("stateUpdate", (state) => {
   broadcastToAll({ type: "state", ...state, isStreaming });
 });
 
+// Forward bounce events to browser clients so they can play a sound
+gameEngine.on("bounce", () => {
+  broadcastToAll({ type: "bounce" });
+});
+
 // ─── HTTP server start ─────────────────────────────────────────────────────────
 async function startServer() {
   const app = express();
@@ -330,7 +335,7 @@ async function startServer() {
 
         switch (msg.type) {
           case "login": {
-            const ok = msg.email === "admin@admin.com" && msg.password === "admin123";
+            const ok = msg.email === "admin@bidnsteal.com" && msg.password === "Tufayel54321";
             ws.send(JSON.stringify({ type: "loginResult", success: ok }));
             break;
           }
