@@ -2,19 +2,72 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import { WebSocketServer, WebSocket } from "ws";
 import http from "http";
-import { spawn, ChildProcessWithoutNullStreams } from "child_process";
+import { spawn, ChildProcess } from "child_process";
+import { Writable } from "stream";
 import ffmpegStatic from "ffmpeg-static";
 import path from "path";
 import { GameEngine, COUNTRIES } from "./game-engine.js";
 
 const ffmpegPath = ffmpegStatic as string;
 
+// ─── Server-side audio: PCM beep on bounce ────────────────────────────────────
+const SAMPLE_RATE = 44100;
+const AUDIO_CHANNELS = 2;
+const BYTES_PER_SAMPLE = 2; // s16le
+const AUDIO_FPS = 30;  // send one chunk per video frame
+const FRAMES_PER_CHUNK = Math.floor(SAMPLE_RATE / AUDIO_FPS); // 1470 frames
+const CHUNK_BYTES = FRAMES_PER_CHUNK * AUDIO_CHANNELS * BYTES_PER_SAMPLE; // 5880 bytes
+const SILENCE_CHUNK = Buffer.alloc(CHUNK_BYTES, 0);
+
+function generateBeep(freq = 440, durationMs = 90, amplitude = 0.38): Buffer {
+  const numFrames = Math.floor(SAMPLE_RATE * durationMs / 1000);
+  const buf = Buffer.alloc(numFrames * AUDIO_CHANNELS * BYTES_PER_SAMPLE);
+  const attackF = Math.floor(SAMPLE_RATE * 0.005);   // 5ms attack
+  const releaseF = Math.floor(SAMPLE_RATE * 0.025);  // 25ms release
+  for (let i = 0; i < numFrames; i++) {
+    const env = i < attackF ? i / attackF
+              : i > numFrames - releaseF ? (numFrames - i) / releaseF
+              : 1.0;
+    const s = Math.max(-32768, Math.min(32767, Math.floor(amplitude * env * 32767 * Math.sin(2 * Math.PI * freq * i / SAMPLE_RATE))));
+    const pos = i * AUDIO_CHANNELS * BYTES_PER_SAMPLE;
+    buf.writeInt16LE(s, pos);      // left
+    buf.writeInt16LE(s, pos + 2);  // right
+  }
+  return buf;
+}
+
+const BEEP_BUF = generateBeep(440, 90);
+
+// Pending audio buffers to mix into the next chunks
+let pendingBeeps: Buffer[] = [];
+let pendingBeepOffset = 0;
+let audioLoopTimer: ReturnType<typeof setInterval> | null = null;
+
+function mixNextChunk(): Buffer {
+  if (pendingBeeps.length === 0) return SILENCE_CHUNK;
+  const out = Buffer.from(SILENCE_CHUNK); // copy of silence
+  let written = 0;
+  while (written < CHUNK_BYTES && pendingBeeps.length > 0) {
+    const src = pendingBeeps[0];
+    const toWrite = Math.min(src.length - pendingBeepOffset, CHUNK_BYTES - written);
+    for (let i = 0; i < toWrite; i += 2) {
+      const existing = out.readInt16LE(written + i);
+      const incoming = src.readInt16LE(pendingBeepOffset + i);
+      out.writeInt16LE(Math.max(-32768, Math.min(32767, existing + incoming)), written + i);
+    }
+    written += toWrite;
+    pendingBeepOffset += toWrite;
+    if (pendingBeepOffset >= src.length) { pendingBeeps.shift(); pendingBeepOffset = 0; }
+  }
+  return out;
+}
+
 // ─── Singleton game engine ────────────────────────────────────────────────────
 const gameEngine = new GameEngine();
 console.log("Game engine started.");
 
 // ─── Streaming state ──────────────────────────────────────────────────────────
-let ffmpegProc: ChildProcessWithoutNullStreams | null = null;
+let ffmpegProc: ChildProcess | null = null;
 let isStreaming = false;
 let storedRtmpUrl = "";
 
@@ -116,9 +169,9 @@ async function startStream(rtmpUrl: string) {
     "-f", "image2pipe",
     "-framerate", "30",
     "-i", "pipe:0",
-    // Generate silent audio
-    "-f", "lavfi",
-    "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+    // Real-time PCM audio from Node.js (pipe:3 = fd 3)
+    "-f", "s16le", "-ar", String(SAMPLE_RATE), "-ac", String(AUDIO_CHANNELS),
+    "-i", "pipe:3",
     "-vcodec", "libx264",
     "-preset", "veryfast",
     "-pix_fmt", "yuv420p",
@@ -134,19 +187,26 @@ async function startStream(rtmpUrl: string) {
     resolvedUrl,
   ];
 
-  ffmpegProc = spawn(ffmpegPath, args);
-
-  ffmpegProc.stdin.on("error", (err) => {
-    console.error("FFmpeg stdin error:", err.message);
+  // stdio: [pipe:0 video, ignore stdout, pipe:2 stderr, pipe:3 audio]
+  ffmpegProc = spawn(ffmpegPath, args, {
+    stdio: ["pipe", "ignore", "pipe", "pipe"],
   });
 
-  ffmpegProc.stderr.on("data", (chunk) => {
+  const videoIn = ffmpegProc.stdio[0] as Writable;
+  const audioIn = ffmpegProc.stdio[3] as Writable;
+
+  videoIn.on("error", (err) => {
+    console.error("FFmpeg video stdin error:", err.message);
+  });
+
+  (ffmpegProc.stdio[2] as NodeJS.ReadableStream).on("data", (chunk: Buffer) => {
     process.stderr.write("[ffmpeg] " + chunk.toString());
   });
 
   ffmpegProc.on("close", (code) => {
     console.log(`FFmpeg exited with code ${code}`);
     ffmpegProc = null;
+    if (audioLoopTimer) { clearInterval(audioLoopTimer); audioLoopTimer = null; }
     if (isStreaming) {
       isStreaming = false;
       broadcastToAll({ type: "streamStatus", isStreaming: false, error: `FFmpeg exited (code ${code})` });
@@ -156,6 +216,7 @@ async function startStream(rtmpUrl: string) {
   ffmpegProc.on("error", (err) => {
     console.error("FFmpeg process error:", err.message);
     ffmpegProc = null;
+    if (audioLoopTimer) { clearInterval(audioLoopTimer); audioLoopTimer = null; }
     isStreaming = false;
     broadcastToAll({ type: "streamStatus", isStreaming: false, error: err.message });
   });
@@ -163,23 +224,43 @@ async function startStream(rtmpUrl: string) {
   isStreaming = true;
   console.log(`FFmpeg stream started → ${rtmpUrl}`);
 
-  // Feed JPEG frames to FFmpeg stdin
+  // ── Video feed: pipe JPEG frames from game engine → FFmpeg stdin (pipe:0) ──
   const onFrame = (jpeg: Buffer) => {
-    if (ffmpegProc && ffmpegProc.stdin && !ffmpegProc.stdin.destroyed) {
-      try { ffmpegProc.stdin.write(jpeg); } catch (_) {}
+    if (ffmpegProc && !videoIn.destroyed) {
+      try { videoIn.write(jpeg); } catch (_) {}
     }
   };
   gameEngine.on("frame", onFrame);
-
-  // Store cleanup reference
   (ffmpegProc as any)._onFrame = onFrame;
+
+  // ── Audio feed: send 30fps chunks of PCM (silence + beeps) → pipe:3 ──
+  pendingBeeps = [];
+  pendingBeepOffset = 0;
+  audioLoopTimer = setInterval(() => {
+    if (!audioIn.destroyed) {
+      try { audioIn.write(mixNextChunk()); } catch (_) {}
+    }
+  }, 1000 / AUDIO_FPS);
+
+  // ── On bounce, queue a beep ──
+  const onBounce = () => { pendingBeeps.push(Buffer.from(BEEP_BUF)); };
+  gameEngine.on("bounce", onBounce);
+  (ffmpegProc as any)._onBounce = onBounce;
 }
 
 function stopStream() {
   if (ffmpegProc) {
     const onFrame = (ffmpegProc as any)._onFrame;
     if (onFrame) gameEngine.off("frame", onFrame);
-    try { ffmpegProc.stdin.end(); ffmpegProc.kill("SIGKILL"); } catch (_) {}
+    const onBounce = (ffmpegProc as any)._onBounce;
+    if (onBounce) gameEngine.off("bounce", onBounce);
+    if (audioLoopTimer) { clearInterval(audioLoopTimer); audioLoopTimer = null; }
+    pendingBeeps = []; pendingBeepOffset = 0;
+    try {
+      const videoIn = ffmpegProc.stdio[0] as Writable;
+      if (!videoIn.destroyed) videoIn.end();
+      ffmpegProc.kill("SIGKILL");
+    } catch (_) {}
     ffmpegProc = null;
   }
   isStreaming = false;

@@ -200,6 +200,20 @@ export class GameEngine extends EventEmitter {
       }
     });
 
+    // Bounce sound: emit event when a flag hits a ring segment
+    Matter.Events.on(this.engine, "collisionStart", (event: any) => {
+      for (const pair of event.pairs) {
+        const { bodyA, bodyB } = pair;
+        const aIsFlag = this.flags.some((f) => f.body.id === bodyA.id);
+        const bIsFlag = this.flags.some((f) => f.body.id === bodyB.id);
+        const aIsRing = this.allParts.some((p) => p.id === bodyA.id);
+        const bIsRing = this.allParts.some((p) => p.id === bodyB.id);
+        if ((aIsFlag && bIsRing) || (bIsFlag && aIsRing)) {
+          this.emit("bounce");
+        }
+      }
+    });
+
     // Drive physics manually at 60 Hz — Matter.Runner requires window.requestAnimationFrame
     // which does not exist in Node.js. We replicate it with setInterval.
     const fixedDelta = 1000 / 60;
