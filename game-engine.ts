@@ -236,7 +236,7 @@ export class GameEngine extends EventEmitter {
     this.gameLoopTimer = setInterval(() => {
       if (this.gameState === "WAITING" && this.flags.length >= 2) {
         this.gameState = "COUNTDOWN";
-        this.countdown = 3;
+        this.countdown = 10;
         this.broadcastState();
       } else if (this.gameState === "COUNTDOWN") {
         this.countdown--;
@@ -322,23 +322,79 @@ export class GameEngine extends EventEmitter {
     });
 
     // ── Status overlays ──
+
+    // WAITING: frosted blur + participation message
     if (this.gameState === "WAITING") {
-      ctx.fillStyle = "rgba(255,61,104,0.15)";
-      ctx.fillRect(CENTER_X - 160, GAME_Y + 14, 320, 28);
-      ctx.fillStyle = "#FF3D68";
-      ctx.font = "bold 11px sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText(`WAITING FOR PLAYERS... (${this.flags.length}/2)`, CENTER_X, GAME_Y + 33);
-    }
-    if (this.gameState === "COUNTDOWN") {
-      ctx.fillStyle = "rgba(255,255,255,0.88)";
+      // Frosted glass effect — layered semi-transparent fills
+      ctx.fillStyle = "rgba(255,255,255,0.55)";
       ctx.fillRect(GAME_X, GAME_Y, GAME_SIZE, GAME_SIZE);
+      ctx.fillStyle = "rgba(255,255,255,0.35)";
+      ctx.fillRect(GAME_X + 4, GAME_Y + 4, GAME_SIZE - 8, GAME_SIZE - 8);
+      ctx.fillStyle = "rgba(255,255,255,0.20)";
+      ctx.fillRect(GAME_X + 8, GAME_Y + 8, GAME_SIZE - 16, GAME_SIZE - 16);
+
+      // ✍️ Participation banner at top center
+      const bannerW = 560;
+      const bannerH = 56;
+      const bannerX = CENTER_X - bannerW / 2;
+      const bannerY = CENTER_Y - 130;
+
+      // Banner background
+      ctx.fillStyle = "rgba(255, 61, 104, 0.92)";
+      ctx.fillRect(bannerX, bannerY, bannerW, bannerH);
+
+      // Banner text line 1
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 20px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("✍️  Write your country name in chat", CENTER_X, bannerY + 24);
+
+      // Banner text line 2
+      ctx.font = "bold 15px sans-serif";
+      ctx.fillStyle = "rgba(255,255,255,0.88)";
+      ctx.fillText("to participate in Flag Fight!", CENTER_X, bannerY + 44);
+
+      // Flag count pill below banner
+      const pillY = bannerY + bannerH + 18;
+      ctx.fillStyle = "rgba(17,24,39,0.75)";
+      ctx.fillRect(CENTER_X - 100, pillY, 200, 28);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 12px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(`${this.flags.length} flag${this.flags.length === 1 ? "" : "s"} ready — need 2 to start`, CENTER_X, pillY + 18);
+    }
+
+    // COUNTDOWN: frosted blur + big countdown number + participation reminder
+    if (this.gameState === "COUNTDOWN") {
+      // Frosted glass layers
+      ctx.fillStyle = "rgba(255,255,255,0.60)";
+      ctx.fillRect(GAME_X, GAME_Y, GAME_SIZE, GAME_SIZE);
+      ctx.fillStyle = "rgba(255,255,255,0.30)";
+      ctx.fillRect(GAME_X + 6, GAME_Y + 6, GAME_SIZE - 12, GAME_SIZE - 12);
+
+      // Big countdown number
       ctx.fillStyle = "#FF3D68";
-      ctx.font = "bold 160px sans-serif";
+      ctx.font = "bold 180px sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(String(this.countdown), CENTER_X, CENTER_Y);
+      ctx.fillText(String(this.countdown), CENTER_X, CENTER_Y - 20);
       ctx.textBaseline = "alphabetic";
+
+      // "Game starts in X" label
+      ctx.fillStyle = "rgba(17,24,39,0.85)";
+      ctx.font = "bold 18px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(`Game starts in ${this.countdown} second${this.countdown === 1 ? "" : "s"}`, CENTER_X, CENTER_Y + 110);
+
+      // Still accepting players banner
+      const bW = 480; const bH = 44;
+      const bX = CENTER_X - bW / 2; const bY = CENTER_Y + 135;
+      ctx.fillStyle = "rgba(255, 61, 104, 0.85)";
+      ctx.fillRect(bX, bY, bW, bH);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 14px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("✍️  Still accepting players — type your country!", CENTER_X, bY + 28);
     }
     if (this.gameState === "ENDED" && this.winner) {
       ctx.fillStyle = "rgba(0,0,0,0.55)";
