@@ -130,6 +130,8 @@ export class GameEngine extends EventEmitter {
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
   private endingRound = false;
   private lastJpeg: Buffer | null = null;
+  private currentRadius = RADIUS;
+  private rotationCount = 0;
 
   constructor() {
     super();
@@ -157,6 +159,13 @@ export class GameEngine extends EventEmitter {
 
     Matter.Events.on(this.engine, "beforeUpdate", () => {
       this.globalAngle += this.gameState === "PLAYING" ? 0.03 : 0.01;
+      
+      // Expand circle after each full rotation
+      const fullRotations = Math.floor(this.globalAngle / (Math.PI * 2));
+      if (fullRotations > this.rotationCount && this.gameState === "PLAYING") {
+        this.rotationCount = fullRotations;
+        this.currentRadius += 10; 
+      }
 
       this.allParts.forEach((part) => {
         const origAngle = (part.customIndex / TOTAL_SEGMENTS) * Math.PI * 2;
@@ -165,8 +174,8 @@ export class GameEngine extends EventEmitter {
           Matter.Body.setPosition(part, { x: -2000, y: -2000 });
         } else {
           Matter.Body.setPosition(part, {
-            x: CENTER_X + Math.cos(curAngle) * RADIUS,
-            y: CENTER_Y + Math.sin(curAngle) * RADIUS,
+            x: CENTER_X + Math.cos(curAngle) * this.currentRadius,
+            y: CENTER_Y + Math.sin(curAngle) * this.currentRadius,
           });
           Matter.Body.setAngle(part, curAngle);
         }
@@ -186,7 +195,7 @@ export class GameEngine extends EventEmitter {
         }
         const dx = f.body.position.x - CENTER_X;
         const dy = f.body.position.y - CENTER_Y;
-        if (Math.sqrt(dx * dx + dy * dy) > RADIUS + 50) {
+        if (Math.sqrt(dx * dx + dy * dy) > this.currentRadius + 50) {
           if (this.gameState === "PLAYING" || this.gameState === "ENDED") {
             Matter.World.remove(this.engine.world, f.body);
             this.flags.splice(i, 1);
@@ -242,6 +251,9 @@ export class GameEngine extends EventEmitter {
     this.winner = null;
     this.gameState = "WAITING";
     this.endingRound = false;
+    this.currentRadius = RADIUS;
+    this.rotationCount = 0;
+    this.globalAngle = 0;
     this.ensureMinimumPlayers();
     this.broadcastState();
   }
@@ -367,8 +379,8 @@ export class GameEngine extends EventEmitter {
     const latestChats = [...this.chatMsgs].reverse().slice(0, 3);
     latestChats.forEach((m, i) => {
       const age = Date.now() - m.ts;
-      const opacity = Math.max(0, 1 - age / 3000);
-      const shiftY = (age / 3000) * 100;
+      const opacity = Math.max(0, 1 - age / 6000);
+      const shiftY = (age / 6000) * 100;
       
       ctx.save();
       ctx.globalAlpha = opacity;
@@ -409,6 +421,19 @@ export class GameEngine extends EventEmitter {
       ctx.fillText(`${wins}W`, 220, y);
       ctx.textAlign = "left";
     });
+    ctx.restore();
+
+    // ── Instruction Text (Below Leaderboard) ──
+    ctx.save();
+    ctx.font = "bold 20px sans-serif";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
+    ctx.textAlign = "center";
+    ctx.fillText("COMMENT YOUR COUNTRY NAME TO SPAWN!", CENTER_X, 350);
+    
+    // ── Instruction Text (Above Arena) ──
+    ctx.font = "bold 24px sans-serif";
+    ctx.fillStyle = "#60a5fa";
+    ctx.fillText("TYPE YOUR COUNTRY!", CENTER_X, CENTER_Y - this.currentRadius - 40);
     ctx.restore();
 
     // ── Overlays ──
