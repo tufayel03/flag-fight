@@ -67,6 +67,14 @@ const gameEngine = new GameEngine();
 console.log("Game engine started.");
 
 // ─── Streaming state ──────────────────────────────────────────────────────────
+type StreamQuality = "480p" | "720p" | "1080p";
+const QUALITY_PRESETS: Record<StreamQuality, { resolution: string, bitrate: string, bufsize: string }> = {
+  "480p": { resolution: "480x854", bitrate: "1000k", bufsize: "2000k" },
+  "720p": { resolution: "720x1280", bitrate: "3000k", bufsize: "6000k" },
+  "1080p": { resolution: "1080x1920", bitrate: "6000k", bufsize: "12000k" },
+};
+
+let currentQuality: StreamQuality = "720p";
 let ffmpegProc: ChildProcess | null = null;
 let isStreaming = false;
 let storedRtmpUrl = "";
@@ -174,9 +182,11 @@ async function startStream(rtmpUrl: string) {
     "-i", "pipe:3",
     "-vcodec", "libx264",
     "-preset", "veryfast",
+    "-vf", `scale=${QUALITY_PRESETS[currentQuality].resolution}`,
     "-pix_fmt", "yuv420p",
-    "-maxrate", "2500k",
-    "-bufsize", "5000k",
+    "-b:v", QUALITY_PRESETS[currentQuality].bitrate,
+    "-maxrate", QUALITY_PRESETS[currentQuality].bitrate,
+    "-bufsize", QUALITY_PRESETS[currentQuality].bufsize,
     "-g", "60",
     "-acodec", "aac",
     "-b:a", "128k",
@@ -326,7 +336,7 @@ async function startServer() {
     adminClients.add(ws);
 
     // Send current state immediately
-    ws.send(JSON.stringify({ type: "state", ...gameEngine.getState(), isStreaming }));
+    ws.send(JSON.stringify({ type: "state", ...gameEngine.getState(), isStreaming, currentQuality }));
 
     ws.on("message", (raw, isBinary) => {
       if (isBinary) return;
@@ -361,6 +371,16 @@ async function startServer() {
             startStream(msg.rtmpUrl);
             startYouTubePolling();
             broadcastToAll({ type: "streamStatus", isStreaming: true });
+            break;
+          }
+
+          case "changeQuality": {
+            currentQuality = msg.quality;
+            console.log("Stream quality updated to:", currentQuality);
+            if (isStreaming && storedRtmpUrl) {
+              console.log("Restarting stream to apply new quality settings...");
+              startStream(storedRtmpUrl);
+            }
             break;
           }
 

@@ -12,6 +12,7 @@ interface GameState {
   chatMessages: Array<{ id: string; user: string; msg: string }>;
   winner: { country: string; emoji: string } | null;
   isStreaming: boolean;
+  currentQuality: string;
 }
 
 const DEFAULT_STATE: GameState = {
@@ -22,6 +23,7 @@ const DEFAULT_STATE: GameState = {
   chatMessages: [],
   winner: null,
   isStreaming: false,
+  currentQuality: '720p',
 };
 
 // ─── App ──────────────────────────────────────────────────────────────────────
@@ -127,6 +129,7 @@ export default function App() {
               chatMessages: msg.chatMessages || [],
               winner: msg.winner,
               isStreaming: msg.isStreaming,
+              currentQuality: msg.currentQuality || prev.currentQuality
             };
           });
           break;
@@ -194,6 +197,10 @@ export default function App() {
     if (!spawnInput.trim()) return;
     send({ type: 'spawnFlag', country: spawnInput.trim().toLowerCase(), user: 'Admin' });
     setSpawnInput('');
+  };
+
+  const handleQualityChange = (q: string) => {
+    send({ type: 'changeQuality', quality: q });
   };
 
   // ─── Login screen ──────────────────────────────────────────────────────────
@@ -303,6 +310,21 @@ export default function App() {
         <div className="flex items-center gap-6">
           <div className="text-center">
             <div className={`font-black text-sm uppercase tracking-widest ${stateColor}`}>{stateLabel}</div>
+          </div>
+          
+          <div className="h-8 w-[1px] bg-white/10"></div>
+
+          <div className="flex flex-col gap-1">
+            <span className="text-[9px] text-gray-500 uppercase font-black tracking-widest text-center">Quality</span>
+            <select 
+              value={game.currentQuality}
+              onChange={(e) => handleQualityChange(e.target.value)}
+              className="bg-[#0f172a] border border-white/10 rounded-md px-2 py-1 text-[10px] font-black uppercase outline-none focus:border-blue-500 transition-colors cursor-pointer"
+            >
+              <option value="480p">480p (Low)</option>
+              <option value="720p">720p (Norm)</option>
+              <option value="1080p">1080p (High)</option>
+            </select>
           </div>
           
           <div className="h-8 w-[1px] bg-white/10"></div>
