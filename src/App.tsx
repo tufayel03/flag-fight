@@ -292,141 +292,116 @@ export default function App() {
   }[game.gameState];
 
   return (
-    <div className="w-full h-screen bg-white text-gray-900 font-sans overflow-hidden grid gap-[1px]"
-      style={{ gridTemplateColumns: '280px minmax(0,1fr) 280px', gridTemplateRows: '72px minmax(0,1fr) 100px' }}>
-
-      {/* Header */}
-      <header className="col-span-3 bg-gray-50 flex items-center justify-between px-10 border-b border-gray-200">
-        <div className="font-black text-2xl tracking-tighter uppercase text-black">Flag Fight // Control</div>
-        <div className={`font-bold text-sm tracking-widest uppercase ${stateColor}`}>{stateLabel}</div>
-        <div className="flex items-center gap-4">
-          <button onClick={handleToggleStream}
-            className={`px-4 py-2 rounded text-xs font-bold uppercase tracking-widest transition-colors ${
-              game.isStreaming
-                ? 'bg-red-500 text-white animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.5)]'
-                : 'bg-gray-800 text-white hover:bg-gray-700'
-            }`}>
-            {game.isStreaming ? '🔴 Stop Stream' : '▶ Start Stream'}
-          </button>
-          {game.isStreaming && (
-            <a href="/preview" target="_blank" rel="noopener noreferrer"
-              className="px-3 py-2 rounded text-xs font-bold uppercase tracking-widest bg-blue-600 text-white hover:bg-blue-700 transition-colors">
-              👁 Preview
-            </a>
-          )}
-          <div className="flex items-center gap-2 text-xs">
-            <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
-            <span className="text-gray-500">{wsConnected ? 'Live' : 'Disconnected'}</span>
+    <div className="w-full h-screen bg-[#0f172a] text-white font-sans overflow-hidden flex flex-col">
+      {/* Top Header */}
+      <header className="h-16 bg-[#1e293b]/80 backdrop-blur-md flex items-center justify-between px-6 border-b border-white/10 shrink-0">
+        <div className="flex flex-col">
+          <h1 className="font-black text-xl tracking-tighter uppercase leading-none">Flag Fight</h1>
+          <span className="text-[10px] text-blue-400 font-bold tracking-widest uppercase">Admin Panel</span>
+        </div>
+        
+        <div className="flex items-center gap-6">
+          <div className="text-center">
+            <div className={`font-black text-sm uppercase tracking-widest ${stateColor}`}>{stateLabel}</div>
           </div>
+          
+          <div className="h-8 w-[1px] bg-white/10"></div>
+          
+          <button onClick={handleToggleStream}
+            className={`px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-widest transition-all ${
+              game.isStreaming
+                ? 'bg-red-500 hover:bg-red-600 animate-pulse shadow-[0_0_20px_rgba(239,68,68,0.3)]'
+                : 'bg-blue-600 hover:bg-blue-700'
+            }`}>
+            {game.isStreaming ? '🔴 Stop Stream' : '▶ Go Live'}
+          </button>
         </div>
       </header>
 
-      {/* Left — Leaderboard */}
-      <aside className="bg-gray-50/80 p-6 border-r border-gray-200 flex flex-col min-h-0 overflow-hidden">
-        <div className="text-[11px] uppercase tracking-widest text-gray-500 mb-5">Global Leaderboard</div>
-        {Object.entries(game.leaderboard).length === 0 && (
-          <div className="text-center text-xs text-gray-400 py-2">No wins yet</div>
-        )}
-        {Object.entries(game.leaderboard)
-          .sort(([, a], [, b]) => b - a)
-          .slice(0, 6)
-          .map(([country, wins], i) => (
-            <div key={country} className="flex justify-between items-center py-3 border-b border-gray-200">
-              <span className="font-black text-[#FF3D68] mr-2">0{i + 1}</span>
-              <span className="flex-1 font-medium capitalize text-gray-800">{country}</span>
-              <span className="font-mono text-gray-500">{wins}w</span>
-            </div>
-          ))}
-      </aside>
-
-      {/* Center — Live game preview */}
-      <main className="relative flex flex-col items-center justify-center min-h-0 overflow-hidden bg-gray-100">
-        {game.isStreaming ? (
-          <>
-            <img
-              src="/preview"
-              alt="Live game preview"
-              className="max-w-full max-h-full object-contain block rounded shadow"
-            />
-            <div className="absolute top-3 left-3 bg-red-500 text-white text-xs font-bold px-2 py-1 rounded animate-pulse">
-              🔴 LIVE
-            </div>
-          </>
-        ) : (
-          <div className="text-center text-gray-400">
-            <div className="text-6xl mb-4">🎮</div>
-            <div className="font-bold text-lg uppercasemb-2">Stream Not Started</div>
-            <div className="text-sm">The game is running on the server.</div>
-            <div className="text-sm mt-1">Click <span className="font-bold text-gray-700">Start Stream</span> to go live on YouTube.</div>
-            <div className="mt-4">
-              <a href="/preview" target="_blank" rel="noopener noreferrer"
-                className="inline-block px-4 py-2 bg-blue-600 text-white text-sm font-bold rounded hover:bg-blue-700 transition-colors">
-                👁 Preview Game (no stream)
-              </a>
-            </div>
-          </div>
-        )}
-
-        {/* Winner overlay */}
-        {game.gameState === 'ENDED' && game.winner && (
-          <div className="absolute bottom-8 text-center w-full animate-bounce pointer-events-none">
-            <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-2">Last Round Winner</div>
-            <div className="text-5xl font-black uppercase text-[#FF3D68] drop-shadow-2xl">
-              {game.winner.country.replace(/\b\w/g, l => l.toUpperCase())}
-            </div>
-          </div>
-        )}
-      </main>
-
-      {/* Right — Chat */}
-      <aside className="bg-gray-50/80 p-6 pl-0 border-l border-gray-200 flex flex-col min-h-0 overflow-hidden">
-        <div className="text-lg font-black uppercase tracking-widest text-gray-800 mb-5 border-b border-gray-200 pb-2 pl-6">
-          Live Chat Spawns
-        </div>
-        <div className="flex-1 min-h-0 overflow-hidden pl-6 pr-4">
-          <div className="flex flex-col gap-3">
-            {[...game.chatMessages].reverse().map(msg => (
-              <div key={msg.id} className="border-b border-gray-200 pb-3">
-                <span className="font-black text-[#FF3D68]">{msg.user}: </span>
-                <span className="text-gray-800 font-bold">{msg.msg}</span>
-                <span className="text-orange-500 font-bold italic text-xs block mt-1">+1 Flag Spawned</span>
+      {/* Main Content Area */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Left Control Panel */}
+        <div className="w-80 bg-[#1e293b]/50 border-r border-white/10 p-6 flex flex-col gap-8 hidden md:flex">
+          <section>
+            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4">Quick Stats</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-[#0f172a] p-4 rounded-xl border border-white/5">
+                <div className="text-2xl font-black">{game.flagCount}</div>
+                <div className="text-[9px] text-gray-500 uppercase font-bold">In Arena</div>
               </div>
-            ))}
-          </div>
+              <div className="bg-[#0f172a] p-4 rounded-xl border border-white/5">
+                <div className="text-2xl font-black">{Object.keys(game.leaderboard).length}</div>
+                <div className="text-[9px] text-gray-500 uppercase font-bold">Total Winners</div>
+              </div>
+            </div>
+          </section>
+
+          <section className="flex-1 flex flex-col min-h-0">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4">Recent Spawns</h3>
+            <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+              {game.chatMessages.slice(0, 10).map(msg => (
+                <div key={msg.id} className="text-xs bg-white/5 p-3 rounded-lg border border-white/5">
+                  <span className="text-blue-400 font-bold">{msg.user}</span>
+                  <span className="text-gray-400 mx-1">spawned</span>
+                  <span className="text-white font-black uppercase">{msg.msg}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <form onSubmit={handleSpawn} className="mt-auto">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-2 block">Manual Spawn</label>
+            <div className="flex gap-2">
+              <input type="text" value={spawnInput} onChange={e => setSpawnInput(e.target.value)}
+                placeholder="Country Name..."
+                className="flex-1 bg-[#0f172a] border border-white/10 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-blue-500 transition-colors" />
+              <button type="submit" className="bg-blue-600 p-3 rounded-lg hover:bg-blue-700 transition-colors">
+                <Send size={18} />
+              </button>
+            </div>
+          </form>
         </div>
-      </aside>
 
-      {/* Footer */}
-      <footer className="col-span-3 bg-gray-50 border-t border-gray-200 flex items-center justify-between px-10">
-        <form onSubmit={handleSpawn} className="flex gap-2 w-[400px]">
-          <input type="text" value={spawnInput} onChange={e => setSpawnInput(e.target.value)}
-            placeholder="Type a country to spawn..."
-            className="flex-1 bg-white border border-gray-300 text-gray-900 px-4 py-2 rounded text-[11px] font-bold uppercase tracking-widest focus:outline-none focus:border-[#FF3D68]" />
-          <button type="submit"
-            className="bg-[#FF3D68] text-white px-6 py-2 rounded text-[11px] font-bold uppercase tracking-widest border border-[#FF3D68] hover:bg-transparent hover:text-[#FF3D68] transition-colors flex items-center gap-2">
-            <Send size={12} /> Spawn
-          </button>
-        </form>
+        {/* Center Preview - 9:16 Vertical Focus */}
+        <main className="flex-1 bg-[#0f172a] relative flex items-center justify-center p-8">
+          <div className="relative h-full aspect-[9/16] bg-black shadow-[0_0_50px_rgba(0,0,0,0.5)] rounded-2xl overflow-hidden border border-white/10">
+            {game.isStreaming ? (
+              <img
+                src="/preview"
+                alt="Live Preview"
+                className="w-full h-full object-contain"
+              />
+            ) : (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-8">
+                <div className="w-20 h-20 bg-blue-500/20 rounded-full flex items-center justify-center mb-6">
+                  <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                </div>
+                <h2 className="text-xl font-black uppercase mb-2">Ready to Stream</h2>
+                <p className="text-gray-400 text-sm">Game is running and auto-spawning 4 countries.</p>
+                <div className="mt-8 flex gap-3">
+                   <a href="/preview" target="_blank" className="px-5 py-2 bg-white/5 hover:bg-white/10 rounded-full text-xs font-bold uppercase transition-all">Open Preview</a>
+                </div>
+              </div>
+            )}
+            
+            <div className="absolute top-4 right-4 flex gap-2">
+              <div className="bg-black/50 backdrop-blur-md px-3 py-1.5 rounded-full flex items-center gap-2 border border-white/10">
+                <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-red-500'} animate-pulse`}></div>
+                <span className="text-[10px] font-black uppercase tracking-widest">{wsConnected ? 'Server Live' : 'Connecting'}</span>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
 
-        <div className="flex gap-10">
-          <div className="flex flex-col">
-            <span className="font-black text-lg text-black">{game.flagCount}</span>
-            <span className="text-[9px] text-gray-500 uppercase tracking-widest">Flags in Arena</span>
-          </div>
-          <div className="flex flex-col">
-            <span className="font-black text-lg text-black">{game.chatMessages.length}</span>
-            <span className="text-[9px] text-gray-500 uppercase tracking-widest">Chat Commands</span>
-          </div>
-          <div className="flex flex-col">
-            <span className={`font-black text-lg ${game.isStreaming ? 'text-red-500' : 'text-gray-400'}`}>
-              {game.isStreaming ? 'ON AIR' : 'OFFLINE'}
-            </span>
-            <span className="text-[9px] text-gray-500 uppercase tracking-widest">Stream Status</span>
-          </div>
-        </div>
-
-        <div className="text-[9px] text-gray-500 uppercase tracking-widest">100% Server-Side v2.0</div>
-      </footer>
+      <style dangerouslySetInnerHTML={{ __html: `
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+      `}} />
+    </div>
+  );
+}
     </div>
   );
 }

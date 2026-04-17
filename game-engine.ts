@@ -4,23 +4,24 @@ import Matter from "matter-js";
 import { EventEmitter } from "events";
 
 // ─── Canvas / layout constants ────────────────────────────────────────────────
-export const STREAM_W = 1280;
-export const STREAM_H = 720;
+export const STREAM_W = 720;
+export const STREAM_H = 1280;
 const GAME_SIZE = 700;
-const GAME_X = Math.floor((STREAM_W - GAME_SIZE) / 2); // 290
-const GAME_Y = Math.floor((STREAM_H - GAME_SIZE) / 2); // 10
-const CENTER_X = GAME_X + GAME_SIZE / 2; // 640
-const CENTER_Y = GAME_Y + GAME_SIZE / 2; // 360
-const RADIUS = 280;
+const GAME_X = (STREAM_W - GAME_SIZE) / 2; 
+const GAME_Y = (STREAM_H - GAME_SIZE) / 2 + 100; // Shift down for leaderboard space
+const CENTER_X = STREAM_W / 2;
+const CENTER_Y = GAME_Y + GAME_SIZE / 2;
+const RADIUS = 320;
 const TOTAL_SEGMENTS = 60;
 const GAP_SEGMENTS = 8;
-const FLAG_SPEED = 11;
-const FLAG_FORCE = 0.0024;
-const FLAG_MAX_SPEED = 11;
+const FLAG_SPEED = 12;
+const FLAG_FORCE = 0.0028;
+const FLAG_MAX_SPEED = 12;
 const FPS = 30;
 
 // ─── Country map ──────────────────────────────────────────────────────────────
 export const COUNTRIES: Record<string, { code: string; emoji: string }> = {
+  // ... (keeping existing countries)
   "afghanistan": { code: "af", emoji: "🇦🇫" }, "albania": { code: "al", emoji: "🇦🇱" }, "algeria": { code: "dz", emoji: "🇩🇿" },
   "andorra": { code: "ad", emoji: "🇦🇩" }, "angola": { code: "ao", emoji: "🇦🇴" }, "argentina": { code: "ar", emoji: "🇦🇷" },
   "armenia": { code: "am", emoji: "🇦🇲" }, "australia": { code: "au", emoji: "🇦🇺" }, "austria": { code: "at", emoji: "🇦🇹" },
@@ -117,10 +118,10 @@ export class GameEngine extends EventEmitter {
   private leaderboard: Record<string, number> = {};
   private chatMsgs: ChatMsg[] = [];
   private globalAngle = 0;
-  private renderTimer: ReturnType<typeof setTimeout> | null = null;
-  private gameLoopTimer: ReturnType<typeof setTimeout> | null = null;
-  private physicsTimer: ReturnType<typeof setTimeout> | null = null;
-  private cleanupTimer: ReturnType<typeof setTimeout> | null = null;
+  private renderTimer: ReturnType<typeof setInterval> | null = null;
+  private gameLoopTimer: ReturnType<typeof setInterval> | null = null;
+  private physicsTimer: ReturnType<typeof setInterval> | null = null;
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
   private endingRound = false;
   private lastJpeg: Buffer | null = null;
 
@@ -139,8 +140,8 @@ export class GameEngine extends EventEmitter {
   private initPhysics() {
     for (let i = 0; i < TOTAL_SEGMENTS; i++) {
       const segLen = (Math.PI * 2 * RADIUS) / TOTAL_SEGMENTS + 4;
-      const part = Matter.Bodies.rectangle(0, 0, 12, segLen, {
-        isStatic: true, friction: 0.1, restitution: 0.8,
+      const part = Matter.Bodies.rectangle(0, 0, 15, segLen, {
+        isStatic: true, friction: 0.1, restitution: 0.9,
       });
       (part as any).customIndex = i;
       (part as any).isGap = i < GAP_SEGMENTS;
@@ -149,13 +150,13 @@ export class GameEngine extends EventEmitter {
     }
 
     Matter.Events.on(this.engine, "beforeUpdate", () => {
-      this.globalAngle += this.gameState === "PLAYING" ? 0.025 : 0.005;
+      this.globalAngle += this.gameState === "PLAYING" ? 0.03 : 0.01;
 
       this.allParts.forEach((part) => {
         const origAngle = (part.customIndex / TOTAL_SEGMENTS) * Math.PI * 2;
         const curAngle = origAngle + this.globalAngle;
         if (part.isGap) {
-          Matter.Body.setPosition(part, { x: -1000, y: -1000 });
+          Matter.Body.setPosition(part, { x: -2000, y: -2000 });
         } else {
           Matter.Body.setPosition(part, {
             x: CENTER_X + Math.cos(curAngle) * RADIUS,
@@ -179,16 +180,12 @@ export class GameEngine extends EventEmitter {
         }
         const dx = f.body.position.x - CENTER_X;
         const dy = f.body.position.y - CENTER_Y;
-        if (Math.sqrt(dx * dx + dy * dy) > RADIUS + 30) {
-          if (this.gameState === "PLAYING") {
+        if (Math.sqrt(dx * dx + dy * dy) > RADIUS + 50) {
+          if (this.gameState === "PLAYING" || this.gameState === "ENDED") {
             Matter.World.remove(this.engine.world, f.body);
             this.flags.splice(i, 1);
           } else {
-            Matter.Body.setPosition(f.body, { x: CENTER_X, y: CENTER_Y });
-            Matter.Body.setVelocity(f.body, {
-              x: (Math.random() - 0.5) * FLAG_SPEED,
-              y: (Math.random() - 0.5) * FLAG_SPEED,
-            });
+            Matter.Body.setPosition(f.body, { x: CENTER_X + (Math.random()-0.5)*50, y: CENTER_Y + (Math.random()-0.5)*50 });
           }
         }
       }
@@ -200,7 +197,6 @@ export class GameEngine extends EventEmitter {
       }
     });
 
-    // Bounce sound: emit event when a flag hits a ring segment
     Matter.Events.on(this.engine, "collisionStart", (event: any) => {
       for (const pair of event.pairs) {
         const { bodyA, bodyB } = pair;
@@ -214,8 +210,6 @@ export class GameEngine extends EventEmitter {
       }
     });
 
-    // Drive physics manually at 60 Hz — Matter.Runner requires window.requestAnimationFrame
-    // which does not exist in Node.js. We replicate it with setInterval.
     const fixedDelta = 1000 / 60;
     this.physicsTimer = setInterval(() => {
       Matter.Engine.update(this.engine, fixedDelta);
@@ -227,13 +221,13 @@ export class GameEngine extends EventEmitter {
     this.winner = { country: flag.country, emoji: flag.emoji };
     this.leaderboard[flag.country] = (this.leaderboard[flag.country] || 0) + 1;
     this.broadcastState();
-    setTimeout(() => this.resetRound(), 5000);
+    setTimeout(() => this.resetRound(), 4000);
   }
   private endRoundDraw() {
     this.gameState = "ENDED";
     this.winner = { country: "Nobody", emoji: "🏳️" };
     this.broadcastState();
-    setTimeout(() => this.resetRound(), 5000);
+    setTimeout(() => this.resetRound(), 4000);
   }
   private resetRound() {
     this.flags.forEach((f) => Matter.World.remove(this.engine.world, f.body));
@@ -242,19 +236,46 @@ export class GameEngine extends EventEmitter {
     this.winner = null;
     this.gameState = "WAITING";
     this.endingRound = false;
+    this.ensureMinimumPlayers();
     this.broadcastState();
+  }
+
+  private ensureMinimumPlayers() {
+    if (this.flags.length < 4) {
+      const needed = 4 - this.flags.length;
+      const allCountries = Object.keys(COUNTRIES);
+      for (let i = 0; i < needed; i++) {
+        const rand = allCountries[Math.floor(Math.random() * allCountries.length)];
+        if (!this.roundCountries.has(rand)) {
+          this.spawnFlag(rand);
+        } else {
+          i--; // Dupe, try again
+        }
+      }
+    }
   }
 
   // ── Game loop ──────────────────────────────────────────────────────────────
   private startGameLoop() {
+    this.ensureMinimumPlayers();
     this.gameLoopTimer = setInterval(() => {
-      if (this.gameState === "WAITING" && this.flags.length >= 2) {
+      if (this.gameState === "WAITING" && this.flags.length >= 4) {
         this.gameState = "COUNTDOWN";
-        this.countdown = 10;
+        this.countdown = 5; // Shorter wait for viewers
         this.broadcastState();
       } else if (this.gameState === "COUNTDOWN") {
         this.countdown--;
-        if (this.countdown <= 0) { this.gameState = "PLAYING"; this.countdown = 0; }
+        if (this.countdown <= 0) { 
+          this.gameState = "PLAYING"; 
+          this.countdown = 0; 
+          // Boost initial speed
+          this.flags.forEach(f => {
+            Matter.Body.setVelocity(f.body, {
+              x: (Math.random() - 0.5) * FLAG_SPEED * 1.5,
+              y: (Math.random() - 0.5) * FLAG_SPEED * 1.5
+            });
+          });
+        }
         this.broadcastState();
       }
     }, 1000);
@@ -262,17 +283,16 @@ export class GameEngine extends EventEmitter {
 
   private startCleanup() {
     this.cleanupTimer = setInterval(() => {
-      const cutoff = Date.now() - 6000;
+      const cutoff = Date.now() - 3000; // Floating messages disappear faster
       this.chatMsgs = this.chatMsgs.filter((m) => m.ts >= cutoff);
-    }, 500);
+    }, 200);
   }
 
   // ── Render loop ────────────────────────────────────────────────────────────
   private startRenderLoop() {
     const tick = () => {
       this.render();
-      // Encode to JPEG async; emit when ready
-      this.canvas.encode("jpeg", 88).then((jpeg) => {
+      this.canvas.encode("jpeg", 82).then((jpeg) => {
         this.lastJpeg = jpeg;
         this.emit("frame", jpeg);
       }).catch(() => {});
@@ -283,44 +303,46 @@ export class GameEngine extends EventEmitter {
   private render() {
     const ctx = this.ctx;
 
-    // Background
-    ctx.fillStyle = "#f3f4f6";
+    // Background Gradient (Sleek Dark Look)
+    const grad = ctx.createLinearGradient(0, 0, 0, STREAM_H);
+    grad.addColorStop(0, "#0f172a");
+    grad.addColorStop(1, "#1e293b");
+    ctx.fillStyle = grad;
     ctx.fillRect(0, 0, STREAM_W, STREAM_H);
 
-    // Game area white background
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(GAME_X, GAME_Y, GAME_SIZE, GAME_SIZE);
-
-    // Ring
+    // Rotating Ring Shadows
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = "rgba(37, 99, 235, 0.4)";
     ctx.fillStyle = "#2563EB";
     this.allParts.forEach((part) => {
-      if (part.position.x < 0) return;
+      if (part.position.x < -100) return;
       ctx.beginPath();
       ctx.moveTo(part.vertices[0].x, part.vertices[0].y);
       for (let j = 1; j < part.vertices.length; j++) ctx.lineTo(part.vertices[j].x, part.vertices[j].y);
       ctx.closePath();
       ctx.fill();
     });
+    ctx.shadowBlur = 0;
 
     // Flags
     this.flags.forEach((flag) => {
       ctx.save();
       ctx.translate(flag.body.position.x, flag.body.position.y);
       ctx.rotate(flag.body.angle);
+      
+      // Outer Glow
+      ctx.shadowBlur = 20;
+      ctx.shadowColor = "#FF3D68";
+      
       ctx.beginPath();
-      ctx.arc(0, 0, 40, 0, Math.PI * 2);
+      ctx.arc(0, 0, 45, 0, Math.PI * 2);
       ctx.clip();
+      
       if (flag.img) {
-        ctx.drawImage(flag.img, -60, -45, 120, 90);
+        ctx.drawImage(flag.img, -65, -50, 130, 100);
       } else {
         ctx.fillStyle = "#334155";
-        ctx.fillRect(-40, -40, 80, 80);
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 14px sans-serif";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(flag.country.slice(0, 3).toUpperCase(), 0, 0);
-        ctx.textBaseline = "alphabetic";
+        ctx.fillRect(-45, -45, 90, 90);
       }
       ctx.restore();
 
@@ -328,175 +350,95 @@ export class GameEngine extends EventEmitter {
       ctx.save();
       ctx.translate(flag.body.position.x, flag.body.position.y);
       ctx.beginPath();
-      ctx.arc(0, 0, 40, 0, Math.PI * 2);
-      ctx.lineWidth = 3;
+      ctx.arc(0, 0, 45, 0, Math.PI * 2);
+      ctx.lineWidth = 4;
       ctx.strokeStyle = "#FF3D68";
       ctx.stroke();
       ctx.restore();
     });
 
-    // ── Status overlays ──
-
-    // WAITING: frosted blur + participation message
-    if (this.gameState === "WAITING") {
-      // Frosted glass effect — layered semi-transparent fills
-      ctx.fillStyle = "rgba(255,255,255,0.55)";
-      ctx.fillRect(GAME_X, GAME_Y, GAME_SIZE, GAME_SIZE);
-      ctx.fillStyle = "rgba(255,255,255,0.35)";
-      ctx.fillRect(GAME_X + 4, GAME_Y + 4, GAME_SIZE - 8, GAME_SIZE - 8);
-      ctx.fillStyle = "rgba(255,255,255,0.20)";
-      ctx.fillRect(GAME_X + 8, GAME_Y + 8, GAME_SIZE - 16, GAME_SIZE - 16);
-
-      // ✍️ Participation banner at top center
-      const bannerW = 560;
-      const bannerH = 56;
-      const bannerX = CENTER_X - bannerW / 2;
-      const bannerY = CENTER_Y - 130;
-
-      // Banner background
-      ctx.fillStyle = "rgba(255, 61, 104, 0.92)";
-      ctx.fillRect(bannerX, bannerY, bannerW, bannerH);
-
-      // Banner text line 1
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 20px sans-serif";
+    // ── Floating Chat Spawns (Top of Circle) ──
+    const latestChats = [...this.chatMsgs].reverse().slice(0, 3);
+    latestChats.forEach((m, i) => {
+      const age = Date.now() - m.ts;
+      const opacity = Math.max(0, 1 - age / 3000);
+      const shiftY = (age / 3000) * 100;
+      
+      ctx.save();
+      ctx.globalAlpha = opacity;
       ctx.textAlign = "center";
-      ctx.fillText("✍️  Write your country name in chat", CENTER_X, bannerY + 24);
-
-      // Banner text line 2
-      ctx.font = "bold 15px sans-serif";
-      ctx.fillStyle = "rgba(255,255,255,0.88)";
-      ctx.fillText("to participate in Flag Fight!", CENTER_X, bannerY + 44);
-
-      // Flag count pill below banner
-      const pillY = bannerY + bannerH + 18;
-      ctx.fillStyle = "rgba(17,24,39,0.75)";
-      ctx.fillRect(CENTER_X - 100, pillY, 200, 28);
+      ctx.font = "bold 28px sans-serif";
+      
+      // Text Shadow
+      ctx.shadowBlur = 4;
+      ctx.shadowColor = "rgba(0,0,0,0.5)";
+      
+      // User name in white
+      const baseY = GAME_Y - 40 - i * 40 - shiftY;
       ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 12px sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText(`${this.flags.length} flag${this.flags.length === 1 ? "" : "s"} ready — need 2 to start`, CENTER_X, pillY + 18);
-    }
+      ctx.fillText(`${m.user} spawned ${m.msg.toUpperCase()}!`, CENTER_X, baseY);
+      ctx.restore();
+    });
 
-    // COUNTDOWN: frosted blur + big countdown number + participation reminder
+    // ── Global Leaderboard (Top Left) ──
+    ctx.save();
+    ctx.translate(30, 40);
+    ctx.fillStyle = "rgba(15, 23, 42, 0.6)";
+    ctx.roundRect(0, 0, 240, 260, 15);
+    ctx.fill();
+    
+    ctx.font = "bold 14px sans-serif";
+    ctx.fillStyle = "#94a3b8";
+    ctx.fillText("🏆 GLOBAL LEADERBOARD", 15, 25);
+    
+    const entries = Object.entries(this.leaderboard).sort(([, a], [, b]) => b - a).slice(0, 5);
+    entries.forEach(([country, wins], i) => {
+      const y = 60 + i * 40;
+      ctx.fillStyle = "#FF3D68"; ctx.font = "bold 18px sans-serif";
+      ctx.fillText(`#${i+1}`, 15, y);
+      ctx.fillStyle = "#ffffff"; ctx.font = "bold 16px sans-serif";
+      const name = country.length > 12 ? country.slice(0, 10) + ".." : country;
+      ctx.fillText(name.toUpperCase(), 50, y);
+      ctx.fillStyle = "#60a5fa"; ctx.textAlign = "right";
+      ctx.fillText(`${wins}W`, 220, y);
+      ctx.textAlign = "left";
+    });
+    ctx.restore();
+
+    // ── Overlays ──
     if (this.gameState === "COUNTDOWN") {
-      // Frosted glass layers
-      ctx.fillStyle = "rgba(255,255,255,0.60)";
-      ctx.fillRect(GAME_X, GAME_Y, GAME_SIZE, GAME_SIZE);
-      ctx.fillStyle = "rgba(255,255,255,0.30)";
-      ctx.fillRect(GAME_X + 6, GAME_Y + 6, GAME_SIZE - 12, GAME_SIZE - 12);
-
-      // Big countdown number
-      ctx.fillStyle = "#FF3D68";
-      ctx.font = "bold 180px sans-serif";
+      ctx.fillStyle = "rgba(0,0,0,0.3)";
+      ctx.fillRect(0, 0, STREAM_W, STREAM_H);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 200px sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(String(this.countdown), CENTER_X, CENTER_Y - 20);
+      ctx.fillText(String(this.countdown), CENTER_X, CENTER_Y);
+      ctx.font = "bold 30px sans-serif";
+      ctx.fillText("STARTING...", CENTER_X, CENTER_Y + 150);
       ctx.textBaseline = "alphabetic";
-
-      // "Game starts in X" label
-      ctx.fillStyle = "rgba(17,24,39,0.85)";
-      ctx.font = "bold 18px sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText(`Game starts in ${this.countdown} second${this.countdown === 1 ? "" : "s"}`, CENTER_X, CENTER_Y + 110);
-
-      // Still accepting players banner
-      const bW = 480; const bH = 44;
-      const bX = CENTER_X - bW / 2; const bY = CENTER_Y + 135;
-      ctx.fillStyle = "rgba(255, 61, 104, 0.85)";
-      ctx.fillRect(bX, bY, bW, bH);
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 14px sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText("✍️  Still accepting players — type your country!", CENTER_X, bY + 28);
     }
+
     if (this.gameState === "ENDED" && this.winner) {
-      ctx.fillStyle = "rgba(0,0,0,0.65)";
-      ctx.fillRect(GAME_X, GAME_Y + GAME_SIZE - 110, GAME_SIZE, 110);
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 16px sans-serif";
+      ctx.save();
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fillRect(0, CENTER_Y - 120, STREAM_W, 240);
       ctx.textAlign = "center";
-      ctx.fillText("🏆  THE WINNER IS  🏆", CENTER_X, GAME_Y + GAME_SIZE - 75);
-      ctx.font = "bold 42px sans-serif";
       ctx.fillStyle = "#FF3D68";
-      const name = this.winner.country.replace(/\b\w/g, (l) => l.toUpperCase());
-      ctx.fillText(name, CENTER_X, GAME_Y + GAME_SIZE - 25);
+      ctx.font = "bold 34px sans-serif";
+      ctx.fillText("ROUND WINNER", CENTER_X, CENTER_Y - 40);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 70px sans-serif";
+      ctx.fillText(this.winner.country.toUpperCase(), CENTER_X, CENTER_Y + 50);
+      ctx.restore();
     }
 
-    // ── Header bar ──
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, STREAM_W, 72);
-    ctx.strokeStyle = "#e5e7eb";
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(0, 72); ctx.lineTo(STREAM_W, 72); ctx.stroke();
-
-    ctx.fillStyle = "#111827";
-    ctx.font = "bold 22px sans-serif";
-    ctx.textAlign = "left";
-    ctx.fillText("FLAG FIGHT", 24, 46);
-
-    const stateLabel: Record<GameStateName, string> = {
-      WAITING: "WAITING FOR PLAYERS",
-      COUNTDOWN: `STARTING IN ${this.countdown}`,
-      PLAYING: "ROUND IN PROGRESS",
-      ENDED: "ROUND ENDED",
-    };
-    ctx.fillStyle = "#FF3D68";
-    ctx.font = "bold 13px sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText(stateLabel[this.gameState], STREAM_W / 2, 46);
-
-    ctx.fillStyle = "#6b7280";
-    ctx.font = "11px sans-serif";
-    ctx.textAlign = "right";
-    ctx.fillText(`${this.flags.length} flags`, STREAM_W - 24, 46);
-
-    // ── Left panel: leaderboard ──
-    ctx.fillStyle = "#f9fafb";
-    ctx.fillRect(0, 72, GAME_X, STREAM_H - 72);
-    ctx.strokeStyle = "#e5e7eb";
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(GAME_X, 72); ctx.lineTo(GAME_X, STREAM_H); ctx.stroke();
-
-    ctx.fillStyle = "#6b7280"; ctx.font = "bold 10px sans-serif"; ctx.textAlign = "left";
-    ctx.fillText("GLOBAL LEADERBOARD", 20, 105);
-    const entries = Object.entries(this.leaderboard).sort(([, a], [, b]) => b - a).slice(0, 6);
-    if (entries.length === 0) {
-      ctx.fillStyle = "#9ca3af"; ctx.font = "12px sans-serif"; ctx.fillText("No wins yet", 20, 135);
-    } else {
-      entries.forEach(([country, wins], i) => {
-        const ey = 130 + i * 45;
-        ctx.fillStyle = "#FF3D68"; ctx.font = "bold 14px sans-serif"; ctx.textAlign = "left";
-        ctx.fillText(`0${i + 1}`, 20, ey);
-        ctx.fillStyle = "#111827"; ctx.font = "13px sans-serif";
-        ctx.fillText(country.replace(/\b\w/g, (l) => l.toUpperCase()), 52, ey);
-        ctx.fillStyle = "#6b7280"; ctx.font = "12px sans-serif"; ctx.textAlign = "right";
-        ctx.fillText(`${wins}w`, GAME_X - 20, ey);
-        ctx.textAlign = "left";
-      });
+    if (this.gameState === "WAITING") {
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 30px sans-serif";
+      ctx.fillText("TYPE COUNTRY TO PLAY!", CENTER_X, CENTER_Y + RADIUS + 80);
     }
-
-    // ── Right panel: chat ──
-    const chatX = GAME_X + GAME_SIZE;
-    ctx.fillStyle = "#f9fafb";
-    ctx.fillRect(chatX, 72, STREAM_W - chatX, STREAM_H - 72);
-    ctx.strokeStyle = "#e5e7eb";
-    ctx.beginPath(); ctx.moveTo(chatX, 72); ctx.lineTo(chatX, STREAM_H); ctx.stroke();
-
-    ctx.fillStyle = "#111827"; ctx.font = "bold 13px sans-serif"; ctx.textAlign = "left";
-    ctx.fillText("LIVE CHAT SPAWNS", chatX + 20, 105);
-
-    const msgs = [...this.chatMsgs].reverse().slice(0, 7);
-    msgs.forEach((m, i) => {
-      const my = 130 + i * 55;
-      ctx.fillStyle = "#FF3D68"; ctx.font = "bold 11px sans-serif"; ctx.textAlign = "left";
-      ctx.fillText(`${m.user}:`, chatX + 16, my);
-      ctx.fillStyle = "#374151"; ctx.font = "bold 12px sans-serif";
-      const txt = m.msg.length > 20 ? m.msg.slice(0, 20) + "…" : m.msg;
-      ctx.fillText(txt, chatX + 16, my + 18);
-      ctx.fillStyle = "#f97316"; ctx.font = "10px sans-serif";
-      ctx.fillText("+1 Flag Spawned", chatX + 16, my + 33);
-    });
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -506,23 +448,26 @@ export class GameEngine extends EventEmitter {
     const data = COUNTRIES[norm];
     if (!data || this.roundCountries.has(norm)) return false;
 
-    const x = CENTER_X + (Math.random() - 0.5) * 100;
-    const y = CENTER_Y + (Math.random() - 0.5) * 100;
-    const body = Matter.Bodies.circle(x, y, 40, { restitution: 1.0, friction: 0, frictionAir: 0, density: 0.05 });
+    const x = CENTER_X + (Math.random() - 0.5) * 150;
+    const y = CENTER_Y + (Math.random() - 0.5) * 150;
+    const body = Matter.Bodies.circle(x, y, 45, { restitution: 1.0, friction: 0, frictionAir: 0, density: 0.1 });
     Matter.Body.setVelocity(body, { x: (Math.random() - 0.5) * FLAG_SPEED, y: (Math.random() - 0.5) * FLAG_SPEED });
 
     const flag: FlagData = { id: Math.random().toString(), body, country: norm, emoji: data.emoji, img: null };
-    loadImage(`https://flagcdn.com/w80/${data.code}.png`).then((img) => { flag.img = img; }).catch(() => {});
+    loadImage(`https://flagcdn.com/w160/${data.code}.png`).then((img) => { flag.img = img; }).catch(() => {});
 
     Matter.World.add(this.engine.world, body);
     this.flags.push(flag);
     this.roundCountries.add(norm);
+    if (this.flags.length >= 4 && this.gameState === "WAITING") {
+       // logic handled in startGameLoop
+    }
     return true;
   }
 
   addChatMessage(user: string, msg: string) {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    this.chatMsgs = [...this.chatMsgs, { id, user, msg, ts: Date.now() }].slice(-50);
+    this.chatMsgs = [{ id, user, msg, ts: Date.now() }, ...this.chatMsgs].slice(0, 10);
     this.broadcastState();
   }
 
