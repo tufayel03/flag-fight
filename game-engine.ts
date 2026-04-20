@@ -121,6 +121,7 @@ export type GameStateName = "WAITING" | "COUNTDOWN" | "PLAYING" | "ENDED";
 export interface ChatMsg { id: string; user: string; msg: string; ts: number; }
 
 export interface WinnerEvent { name: string; isDraw: boolean; }
+export interface PlayerJoinedEvent { name: string; }
 
 export interface GameStateSnapshot {
   gameState: GameStateName;
@@ -254,7 +255,7 @@ export class GameEngine extends EventEmitter {
   private endRound(flag: FlagData) {
     this.gameState = "ENDED";
     this.winner = { country: flag.name, emoji: "" };
-    this.leaderboard[flag.name] = (this.leaderboard[flag.name] || 0) + 1;
+    if (!flag.isBot) this.leaderboard[flag.name] = (this.leaderboard[flag.name] || 0) + 1;
     this.emit("winner", { name: flag.name, isDraw: false } satisfies WinnerEvent);
     this.broadcastState();
     this.scheduleRoundReset();
@@ -453,28 +454,30 @@ export class GameEngine extends EventEmitter {
       ctx.restore();
     });
 
-    // ── Global Leaderboard (Top Left) ──
     ctx.save();
-    ctx.translate(30, 40);
+    ctx.translate(80, 78);
     ctx.fillStyle = "rgba(15, 23, 42, 0.6)";
-    ctx.roundRect(0, 0, 240, 260, 15);
+    ctx.roundRect(0, 0, 560, 260, 15);
     ctx.fill();
     
-    ctx.font = "bold 14px sans-serif";
+    ctx.textAlign = "center";
+    ctx.font = "bold 22px sans-serif";
     ctx.fillStyle = "#94a3b8";
-    ctx.fillText("🏆 GLOBAL LEADERBOARD", 15, 25);
+    ctx.fillText("GLOBAL LEADERBOARD", 280, 35);
     
     const entries = Object.entries(this.leaderboard).sort(([, a], [, b]) => b - a).slice(0, 5);
+    if (entries.length === 0) {
+      ctx.fillStyle = "rgba(255,255,255,0.55)";
+      ctx.font = "bold 22px sans-serif";
+      ctx.fillText("NO WINNERS YET", 280, 135);
+    }
     entries.forEach(([country, wins], i) => {
-      const y = 60 + i * 40;
-      ctx.fillStyle = "#FF3D68"; ctx.font = "bold 18px sans-serif";
-      ctx.fillText(`#${i+1}`, 15, y);
-      ctx.fillStyle = "#ffffff"; ctx.font = "bold 16px sans-serif";
-      const name = country.length > 12 ? country.slice(0, 10) + ".." : country;
-      ctx.fillText(name.toUpperCase(), 50, y);
-      ctx.fillStyle = "#60a5fa"; ctx.textAlign = "right";
-      ctx.fillText(`${wins}W`, 220, y);
-      ctx.textAlign = "left";
+      const y = 78 + i * 34;
+      const name = this.truncateName(country, 18).toUpperCase();
+      ctx.fillStyle = i === 0 ? "#FF3D68" : "#ffffff";
+      ctx.font = "bold 24px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(`#${i + 1}  ${name}  ${wins}W`, 280, y);
     });
     ctx.restore();
 
@@ -582,6 +585,7 @@ export class GameEngine extends EventEmitter {
     Matter.World.add(this.engine.world, body);
     this.flags.push(flag);
     this.updateArenaRadiusForCrowd();
+    if (!flag.isBot) this.emit("playerJoined", { name } satisfies PlayerJoinedEvent);
     if (this.flags.length >= MIN_PLAYERS && this.gameState === "WAITING") {
        // logic handled in startGameLoop
     }

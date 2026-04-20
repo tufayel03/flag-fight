@@ -7,7 +7,7 @@ import { Writable } from "stream";
 import ffmpegStatic from "ffmpeg-static";
 import path from "path";
 import { GameEngine } from "./game-engine.js";
-import type { WinnerEvent } from "./game-engine.js";
+import type { PlayerJoinedEvent, WinnerEvent } from "./game-engine.js";
 
 const ffmpegPath = ffmpegStatic as string;
 
@@ -104,25 +104,38 @@ function decodeAudioToPcm(audio: Buffer): Promise<Buffer> {
   });
 }
 
+async function synthesizeSpeechPcm(text: string): Promise<Buffer> {
+  const params = new URLSearchParams({
+    ie: "UTF-8",
+    q: text.slice(0, 180),
+    tl: "en",
+    client: "tw-ob",
+  });
+  const res = await fetch(`https://translate.google.com/translate_tts?${params.toString()}`, {
+    headers: { "User-Agent": "Mozilla/5.0" },
+  });
+  if (!res.ok) throw new Error(`TTS request failed: ${res.status}`);
+  const audio = Buffer.from(await res.arrayBuffer());
+  return decodeAudioToPcm(audio);
+}
+
 async function createWinnerAnnouncementPcm(winner: WinnerEvent): Promise<Buffer> {
   const text = winner.isDraw ? "Nobody won this round" : `The winner is ${winner.name}`;
   try {
-    const params = new URLSearchParams({
-      ie: "UTF-8",
-      q: text.slice(0, 180),
-      tl: "en",
-      client: "tw-ob",
-    });
-    const res = await fetch(`https://translate.google.com/translate_tts?${params.toString()}`, {
-      headers: { "User-Agent": "Mozilla/5.0" },
-    });
-    if (!res.ok) throw new Error(`TTS request failed: ${res.status}`);
-    const audio = Buffer.from(await res.arrayBuffer());
-    const speech = await decodeAudioToPcm(audio);
+    const speech = await synthesizeSpeechPcm(text);
     return Buffer.concat([generateFanfare(), speech]);
   } catch (err) {
     console.error("Winner TTS failed, using fanfare only:", err);
     return generateFanfare();
+  }
+}
+
+async function createJoinAnnouncementPcm(player: PlayerJoinedEvent): Promise<Buffer | null> {
+  try {
+    return await synthesizeSpeechPcm(`${player.name} has joined`);
+  } catch (err) {
+    console.error("Join TTS failed:", err);
+    return null;
   }
 }
 
@@ -252,6 +265,12 @@ function cleanupFfmpegProcess(proc: ChildProcess) {
   if (onWinner) {
     gameEngine.off("winner", onWinner);
     (proc as any)._onWinner = null;
+  }
+
+  const onPlayerJoined = (proc as any)._onPlayerJoined;
+  if (onPlayerJoined) {
+    gameEngine.off("playerJoined", onPlayerJoined);
+    (proc as any)._onPlayerJoined = null;
   }
 
   if (ffmpegProc === proc) {
@@ -399,6 +418,14 @@ async function startStream(rtmpUrl: string) {
   };
   gameEngine.on("winner", onWinner);
   (proc as any)._onWinner = onWinner;
+
+  const onPlayerJoined = (player: PlayerJoinedEvent) => {
+    createJoinAnnouncementPcm(player).then((pcm) => {
+      if (pcm && ffmpegProc === proc) queueAudio(pcm);
+    }).catch((err) => console.error("Join announcement error:", err));
+  };
+  gameEngine.on("playerJoined", onPlayerJoined);
+  (proc as any)._onPlayerJoined = onPlayerJoined;
 
   gameEngine.start();
 }
