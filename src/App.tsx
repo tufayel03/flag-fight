@@ -208,7 +208,7 @@ export default function App() {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
         <div className="bg-white p-8 rounded-xl shadow-lg max-w-md w-full border border-gray-200">
           <div className="text-center mb-8">
-            <h1 className="font-black text-3xl tracking-tighter uppercase text-black mb-2">Flag Fight</h1>
+            <h1 className="font-black text-3xl tracking-tighter uppercase text-black mb-2">Bot</h1>
             <p className="text-gray-500 text-sm font-medium">Streamer Dashboard Login</p>
             <div className={`mt-2 inline-flex items-center gap-2 text-xs font-bold px-3 py-1 rounded-full ${wsConnected ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-500'}`}>
               <span className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-red-400'}`}></span>
@@ -296,7 +296,7 @@ export default function App() {
       {/* Top Header */}
       <header className="h-16 bg-[#1e293b]/80 backdrop-blur-md flex items-center justify-between px-6 border-b border-white/10 shrink-0">
         <div className="flex flex-col">
-          <h1 className="font-black text-xl tracking-tighter uppercase leading-none">Flag Fight</h1>
+          <h1 className="font-black text-xl tracking-tighter uppercase leading-none">Bot</h1>
           <span className="text-[10px] text-blue-400 font-bold tracking-widest uppercase">Admin Panel</span>
         </div>
         

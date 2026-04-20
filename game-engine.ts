@@ -17,6 +17,9 @@ const GAP_SEGMENTS = 8;
 const FLAG_SPEED = 12;
 const FLAG_FORCE = 0.0028;
 const FLAG_MAX_SPEED = 12;
+const SPEED_LIMIT_PER_ROTATION = 1.5;
+const MAX_SPEED_LIMIT = 28;
+const SPEED_BOOST_PER_ROTATION = 1.12;
 const FPS = 30;
 const MIN_PLAYERS = 2;
 const PLAYER_RING_SPACING = 96;
@@ -24,8 +27,8 @@ const RADIUS_GROWTH_STEP = 20;
 const MAX_RADIUS = 430;
 const GAP_SEGMENTS_PER_ROTATION = 2;
 const BOT_PLAYER: PlayerInput = {
-  id: "bot:flag-fight",
-  name: "Flag Fight Bot",
+  id: "bot:bot",
+  name: "Bot",
   isBot: true,
 };
 
@@ -208,8 +211,9 @@ export class GameEngine extends EventEmitter {
             y: (Math.random() - 0.5) * fm,
           });
           const spd = Matter.Vector.magnitude(f.body.velocity);
-          if (spd > FLAG_MAX_SPEED)
-            Matter.Body.setVelocity(f.body, Matter.Vector.mult(Matter.Vector.normalise(f.body.velocity), FLAG_MAX_SPEED));
+          const speedLimit = this.getCurrentSpeedLimit();
+          if (spd > speedLimit)
+            Matter.Body.setVelocity(f.body, Matter.Vector.mult(Matter.Vector.normalise(f.body.velocity), speedLimit));
         }
         const dx = f.body.position.x - CENTER_X;
         const dy = f.body.position.y - CENTER_Y;
@@ -300,8 +304,32 @@ export class GameEngine extends EventEmitter {
   private updateGapGrowth() {
     const fullRotations = Math.floor(this.globalAngle / (Math.PI * 2));
     if (fullRotations <= this.lastGapRotation) return;
-    this.gapGrowthRotations += fullRotations - this.lastGapRotation;
+    const rotationDelta = fullRotations - this.lastGapRotation;
+    this.gapGrowthRotations += rotationDelta;
     this.lastGapRotation = fullRotations;
+    this.boostPlayerSpeeds(rotationDelta);
+  }
+
+  private getCurrentSpeedLimit() {
+    return Math.min(MAX_SPEED_LIMIT, FLAG_MAX_SPEED + this.gapGrowthRotations * SPEED_LIMIT_PER_ROTATION);
+  }
+
+  private boostPlayerSpeeds(rotationDelta: number) {
+    const speedLimit = this.getCurrentSpeedLimit();
+    const boost = SPEED_BOOST_PER_ROTATION ** rotationDelta;
+    this.flags.forEach((flag) => {
+      const velocity = flag.body.velocity;
+      const speed = Matter.Vector.magnitude(velocity);
+      if (speed > 0.1) {
+        const nextSpeed = Math.min(speedLimit, Math.max(FLAG_SPEED, speed * boost));
+        Matter.Body.setVelocity(flag.body, Matter.Vector.mult(Matter.Vector.normalise(velocity), nextSpeed));
+      } else {
+        Matter.Body.setVelocity(flag.body, {
+          x: (Math.random() - 0.5) * FLAG_SPEED,
+          y: (Math.random() - 0.5) * FLAG_SPEED,
+        });
+      }
+    });
   }
 
   private updateArenaRadiusForCrowd() {
