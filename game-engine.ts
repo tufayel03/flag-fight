@@ -19,9 +19,10 @@ const FLAG_FORCE = 0.0028;
 const FLAG_MAX_SPEED = 12;
 const FPS = 30;
 const MIN_PLAYERS = 2;
-const GAP_GROWTH_START_MS = 15000;
-const GAP_GROWTH_STEP_MS = 5000;
-const GAP_GROWTH_SEGMENTS = 2;
+const PLAYER_RING_SPACING = 96;
+const RADIUS_GROWTH_STEP = 20;
+const MAX_RADIUS = 430;
+const GAP_SEGMENTS_PER_ROTATION = 2;
 const BOT_PLAYER: PlayerInput = {
   id: "bot:flag-fight",
   name: "Flag Fight Bot",
@@ -151,7 +152,8 @@ export class GameEngine extends EventEmitter {
   private endingRound = false;
   private lastJpeg: Buffer | null = null;
   private currentRadius = RADIUS;
-  private playingStartedAt = 0;
+  private gapGrowthRotations = 0;
+  private lastGapRotation = 0;
 
   constructor() {
     super();
@@ -177,6 +179,7 @@ export class GameEngine extends EventEmitter {
 
     Matter.Events.on(this.engine, "beforeUpdate", () => {
       this.globalAngle += this.gameState === "PLAYING" ? 0.03 : 0.01;
+      if (this.gameState === "PLAYING") this.updateGapGrowth();
       
       const gapSegments = this.getGapSegments();
       this.allParts.forEach((part) => {
@@ -267,7 +270,8 @@ export class GameEngine extends EventEmitter {
     this.endingRound = false;
     this.currentRadius = RADIUS;
     this.globalAngle = 0;
-    this.playingStartedAt = 0;
+    this.gapGrowthRotations = 0;
+    this.lastGapRotation = 0;
     if (this.isRunning) {
       this.ensureMinimumPlayers();
       this.flushQueuedPlayers();
@@ -285,11 +289,20 @@ export class GameEngine extends EventEmitter {
   }
 
   private getGapSegments() {
-    if (this.gameState !== "PLAYING" || !this.playingStartedAt) return GAP_SEGMENTS;
-    const elapsed = Date.now() - this.playingStartedAt;
-    if (elapsed < GAP_GROWTH_START_MS) return GAP_SEGMENTS;
-    const growthSteps = Math.floor((elapsed - GAP_GROWTH_START_MS) / GAP_GROWTH_STEP_MS) + 1;
-    return Math.min(TOTAL_SEGMENTS - 12, GAP_SEGMENTS + growthSteps * GAP_GROWTH_SEGMENTS);
+    return Math.min(TOTAL_SEGMENTS - 12, GAP_SEGMENTS + this.gapGrowthRotations * GAP_SEGMENTS_PER_ROTATION);
+  }
+
+  private updateGapGrowth() {
+    const fullRotations = Math.floor(this.globalAngle / (Math.PI * 2));
+    if (fullRotations <= this.lastGapRotation) return;
+    this.gapGrowthRotations += fullRotations - this.lastGapRotation;
+    this.lastGapRotation = fullRotations;
+  }
+
+  private updateArenaRadiusForCrowd() {
+    const neededRadius = Math.ceil((this.flags.length * PLAYER_RING_SPACING) / (Math.PI * 2));
+    const steppedRadius = Math.ceil(Math.max(RADIUS, neededRadius) / RADIUS_GROWTH_STEP) * RADIUS_GROWTH_STEP;
+    this.currentRadius = Math.max(this.currentRadius, Math.min(MAX_RADIUS, steppedRadius));
   }
 
   // ── Game loop ──────────────────────────────────────────────────────────────
@@ -306,7 +319,8 @@ export class GameEngine extends EventEmitter {
         if (this.countdown <= 0) { 
           this.gameState = "PLAYING"; 
           this.countdown = 0; 
-          this.playingStartedAt = Date.now();
+          this.gapGrowthRotations = 0;
+          this.lastGapRotation = Math.floor(this.globalAngle / (Math.PI * 2));
           // Boost initial speed
           this.flags.forEach(f => {
             Matter.Body.setVelocity(f.body, {
@@ -563,6 +577,7 @@ export class GameEngine extends EventEmitter {
 
     Matter.World.add(this.engine.world, body);
     this.flags.push(flag);
+    this.updateArenaRadiusForCrowd();
     if (this.flags.length >= MIN_PLAYERS && this.gameState === "WAITING") {
        // logic handled in startGameLoop
     }
@@ -667,7 +682,8 @@ export class GameEngine extends EventEmitter {
     this.globalAngle = 0;
     this.endingRound = false;
     this.currentRadius = RADIUS;
-    this.playingStartedAt = 0;
+    this.gapGrowthRotations = 0;
+    this.lastGapRotation = 0;
   }
 
   private removeAllFlags() {
