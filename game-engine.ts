@@ -19,6 +19,9 @@ const FLAG_FORCE = 0.0028;
 const FLAG_MAX_SPEED = 12;
 const FPS = 30;
 const MIN_PLAYERS = 2;
+const GAP_GROWTH_START_MS = 15000;
+const GAP_GROWTH_STEP_MS = 5000;
+const GAP_GROWTH_SEGMENTS = 2;
 const BOT_PLAYER: PlayerInput = {
   id: "bot:flag-fight",
   name: "Flag Fight Bot",
@@ -148,7 +151,7 @@ export class GameEngine extends EventEmitter {
   private endingRound = false;
   private lastJpeg: Buffer | null = null;
   private currentRadius = RADIUS;
-  private rotationCount = 0;
+  private playingStartedAt = 0;
 
   constructor() {
     super();
@@ -175,13 +178,6 @@ export class GameEngine extends EventEmitter {
     Matter.Events.on(this.engine, "beforeUpdate", () => {
       this.globalAngle += this.gameState === "PLAYING" ? 0.03 : 0.01;
       
-      // Expand circle after each full rotation
-      const fullRotations = Math.floor(this.globalAngle / (Math.PI * 2));
-      if (fullRotations > this.rotationCount && this.gameState === "PLAYING") {
-        this.rotationCount = fullRotations;
-        this.currentRadius += 10; 
-      }
-
       const gapSegments = this.getGapSegments();
       this.allParts.forEach((part) => {
         const origAngle = (part.customIndex / TOTAL_SEGMENTS) * Math.PI * 2;
@@ -270,8 +266,8 @@ export class GameEngine extends EventEmitter {
     this.countdown = 3;
     this.endingRound = false;
     this.currentRadius = RADIUS;
-    this.rotationCount = 0;
     this.globalAngle = 0;
+    this.playingStartedAt = 0;
     if (this.isRunning) {
       this.ensureMinimumPlayers();
       this.flushQueuedPlayers();
@@ -289,8 +285,11 @@ export class GameEngine extends EventEmitter {
   }
 
   private getGapSegments() {
-    const crowdedPlayerCount = Math.max(0, this.flags.length - 4);
-    return Math.min(TOTAL_SEGMENTS - 12, GAP_SEGMENTS + Math.floor(crowdedPlayerCount / 2));
+    if (this.gameState !== "PLAYING" || !this.playingStartedAt) return GAP_SEGMENTS;
+    const elapsed = Date.now() - this.playingStartedAt;
+    if (elapsed < GAP_GROWTH_START_MS) return GAP_SEGMENTS;
+    const growthSteps = Math.floor((elapsed - GAP_GROWTH_START_MS) / GAP_GROWTH_STEP_MS) + 1;
+    return Math.min(TOTAL_SEGMENTS - 12, GAP_SEGMENTS + growthSteps * GAP_GROWTH_SEGMENTS);
   }
 
   // ── Game loop ──────────────────────────────────────────────────────────────
@@ -307,6 +306,7 @@ export class GameEngine extends EventEmitter {
         if (this.countdown <= 0) { 
           this.gameState = "PLAYING"; 
           this.countdown = 0; 
+          this.playingStartedAt = Date.now();
           // Boost initial speed
           this.flags.forEach(f => {
             Matter.Body.setVelocity(f.body, {
@@ -667,7 +667,7 @@ export class GameEngine extends EventEmitter {
     this.globalAngle = 0;
     this.endingRound = false;
     this.currentRadius = RADIUS;
-    this.rotationCount = 0;
+    this.playingStartedAt = 0;
   }
 
   private removeAllFlags() {
