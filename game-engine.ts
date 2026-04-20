@@ -120,6 +120,8 @@ export type GameStateName = "WAITING" | "COUNTDOWN" | "PLAYING" | "ENDED";
 
 export interface ChatMsg { id: string; user: string; msg: string; ts: number; }
 
+export interface WinnerEvent { name: string; isDraw: boolean; }
+
 export interface GameStateSnapshot {
   gameState: GameStateName;
   countdown: number;
@@ -253,12 +255,14 @@ export class GameEngine extends EventEmitter {
     this.gameState = "ENDED";
     this.winner = { country: flag.name, emoji: "" };
     this.leaderboard[flag.name] = (this.leaderboard[flag.name] || 0) + 1;
+    this.emit("winner", { name: flag.name, isDraw: false } satisfies WinnerEvent);
     this.broadcastState();
     this.scheduleRoundReset();
   }
   private endRoundDraw() {
     this.gameState = "ENDED";
     this.winner = { country: "Nobody", emoji: "🏳️" };
+    this.emit("winner", { name: "Nobody", isDraw: true } satisfies WinnerEvent);
     this.broadcastState();
     this.scheduleRoundReset();
   }

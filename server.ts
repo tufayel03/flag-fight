@@ -7,6 +7,7 @@ import { Writable } from "stream";
 import ffmpegStatic from "ffmpeg-static";
 import path from "path";
 import { GameEngine } from "./game-engine.js";
+import type { WinnerEvent } from "./game-engine.js";
 
 const ffmpegPath = ffmpegStatic as string;
 
@@ -38,28 +39,95 @@ function generateBeep(freq = 440, durationMs = 90, amplitude = 0.38): Buffer {
 
 const BEEP_BUF = generateBeep(440, 90);
 
-// Pending audio buffers to mix into the next chunks
-let pendingBeeps: Buffer[] = [];
-let pendingBeepOffset = 0;
+// Pending PCM audio buffers to mix into the next chunks
+let pendingAudioBuffers: Buffer[] = [];
+let pendingAudioOffset = 0;
 let audioLoopTimer: ReturnType<typeof setInterval> | null = null;
 
 function mixNextChunk(): Buffer {
-  if (pendingBeeps.length === 0) return SILENCE_CHUNK;
+  if (pendingAudioBuffers.length === 0) return SILENCE_CHUNK;
   const out = Buffer.from(SILENCE_CHUNK); // copy of silence
   let written = 0;
-  while (written < CHUNK_BYTES && pendingBeeps.length > 0) {
-    const src = pendingBeeps[0];
-    const toWrite = Math.min(src.length - pendingBeepOffset, CHUNK_BYTES - written);
+  while (written < CHUNK_BYTES && pendingAudioBuffers.length > 0) {
+    const src = pendingAudioBuffers[0];
+    const toWrite = Math.min(src.length - pendingAudioOffset, CHUNK_BYTES - written);
     for (let i = 0; i < toWrite; i += 2) {
       const existing = out.readInt16LE(written + i);
-      const incoming = src.readInt16LE(pendingBeepOffset + i);
+      const incoming = src.readInt16LE(pendingAudioOffset + i);
       out.writeInt16LE(Math.max(-32768, Math.min(32767, existing + incoming)), written + i);
     }
     written += toWrite;
-    pendingBeepOffset += toWrite;
-    if (pendingBeepOffset >= src.length) { pendingBeeps.shift(); pendingBeepOffset = 0; }
+    pendingAudioOffset += toWrite;
+    if (pendingAudioOffset >= src.length) { pendingAudioBuffers.shift(); pendingAudioOffset = 0; }
   }
   return out;
+}
+
+function generateSilence(durationMs: number): Buffer {
+  const frames = Math.floor(SAMPLE_RATE * durationMs / 1000);
+  return Buffer.alloc(frames * AUDIO_CHANNELS * BYTES_PER_SAMPLE, 0);
+}
+
+function generateFanfare(): Buffer {
+  return Buffer.concat([
+    generateBeep(523, 140, 0.28),
+    generateSilence(45),
+    generateBeep(659, 140, 0.28),
+    generateSilence(45),
+    generateBeep(784, 220, 0.30),
+    generateSilence(90),
+  ]);
+}
+
+function decodeAudioToPcm(audio: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const decoder = spawn(ffmpegPath, [
+      "-hide_banner",
+      "-loglevel", "error",
+      "-i", "pipe:0",
+      "-f", "s16le",
+      "-ar", String(SAMPLE_RATE),
+      "-ac", String(AUDIO_CHANNELS),
+      "pipe:1",
+    ], { stdio: ["pipe", "pipe", "pipe"] });
+
+    const chunks: Buffer[] = [];
+    const errors: Buffer[] = [];
+    decoder.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+    decoder.stderr.on("data", (chunk: Buffer) => errors.push(chunk));
+    decoder.on("error", reject);
+    decoder.on("close", (code) => {
+      if (code === 0) resolve(Buffer.concat(chunks));
+      else reject(new Error(Buffer.concat(errors).toString() || `FFmpeg decode failed with code ${code}`));
+    });
+    decoder.stdin.end(audio);
+  });
+}
+
+async function createWinnerAnnouncementPcm(winner: WinnerEvent): Promise<Buffer> {
+  const text = winner.isDraw ? "Nobody won this round" : `The winner is ${winner.name}`;
+  try {
+    const params = new URLSearchParams({
+      ie: "UTF-8",
+      q: text.slice(0, 180),
+      tl: "en",
+      client: "tw-ob",
+    });
+    const res = await fetch(`https://translate.google.com/translate_tts?${params.toString()}`, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+    });
+    if (!res.ok) throw new Error(`TTS request failed: ${res.status}`);
+    const audio = Buffer.from(await res.arrayBuffer());
+    const speech = await decodeAudioToPcm(audio);
+    return Buffer.concat([generateFanfare(), speech]);
+  } catch (err) {
+    console.error("Winner TTS failed, using fanfare only:", err);
+    return generateFanfare();
+  }
+}
+
+function queueAudio(buffer: Buffer) {
+  pendingAudioBuffers.push(buffer);
 }
 
 // ─── Singleton game engine ────────────────────────────────────────────────────
@@ -180,13 +248,19 @@ function cleanupFfmpegProcess(proc: ChildProcess) {
     (proc as any)._onBounce = null;
   }
 
+  const onWinner = (proc as any)._onWinner;
+  if (onWinner) {
+    gameEngine.off("winner", onWinner);
+    (proc as any)._onWinner = null;
+  }
+
   if (ffmpegProc === proc) {
     if (audioLoopTimer) {
       clearInterval(audioLoopTimer);
       audioLoopTimer = null;
     }
-    pendingBeeps = [];
-    pendingBeepOffset = 0;
+    pendingAudioBuffers = [];
+    pendingAudioOffset = 0;
   }
 }
 
@@ -305,8 +379,8 @@ async function startStream(rtmpUrl: string) {
   (proc as any)._onFrame = onFrame;
 
   // ── Audio feed: send 30fps chunks of PCM (silence + beeps) → pipe:3 ──
-  pendingBeeps = [];
-  pendingBeepOffset = 0;
+  pendingAudioBuffers = [];
+  pendingAudioOffset = 0;
   audioLoopTimer = setInterval(() => {
     if (!audioIn.destroyed) {
       try { audioIn.write(mixNextChunk()); } catch (_) {}
@@ -314,9 +388,17 @@ async function startStream(rtmpUrl: string) {
   }, 1000 / AUDIO_FPS);
 
   // ── On bounce, queue a beep ──
-  const onBounce = () => { pendingBeeps.push(Buffer.from(BEEP_BUF)); };
+  const onBounce = () => { queueAudio(Buffer.from(BEEP_BUF)); };
   gameEngine.on("bounce", onBounce);
   (proc as any)._onBounce = onBounce;
+
+  const onWinner = (winner: WinnerEvent) => {
+    createWinnerAnnouncementPcm(winner).then((pcm) => {
+      if (ffmpegProc === proc) queueAudio(pcm);
+    }).catch((err) => console.error("Winner announcement error:", err));
+  };
+  gameEngine.on("winner", onWinner);
+  (proc as any)._onWinner = onWinner;
 
   gameEngine.start();
 }
