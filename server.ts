@@ -6,7 +6,7 @@ import { spawn, ChildProcess } from "child_process";
 import { Writable } from "stream";
 import ffmpegStatic from "ffmpeg-static";
 import path from "path";
-import { GameEngine, COUNTRIES } from "./game-engine.js";
+import { GameEngine } from "./game-engine.js";
 
 const ffmpegPath = ffmpegStatic as string;
 
@@ -64,7 +64,7 @@ function mixNextChunk(): Buffer {
 
 // ─── Singleton game engine ────────────────────────────────────────────────────
 const gameEngine = new GameEngine();
-console.log("Game engine started.");
+console.log("Game engine ready.");
 
 // ─── Streaming state ──────────────────────────────────────────────────────────
 type StreamQuality = "480p" | "720p" | "1080p";
@@ -78,6 +78,7 @@ let currentQuality: StreamQuality = "720p";
 let ffmpegProc: ChildProcess | null = null;
 let isStreaming = false;
 let storedRtmpUrl = "";
+let streamStartToken = 0;
 
 // ─── YouTube chat polling state ───────────────────────────────────────────────
 let ytApiKey = "";
@@ -116,15 +117,19 @@ function startYouTubePolling() {
       const data = await res.json();
 
       if (data.items?.length > 0) {
-        const sortedCountries = Object.keys(COUNTRIES).sort((a, b) => b.length - a.length);
         data.items.forEach((item: any) => {
-          const msg = item.snippet.displayMessage.toLowerCase();
-          const author = item.authorDetails.displayName;
-          const match = sortedCountries.find((c) => msg.includes(c));
-          if (match) {
-            gameEngine.addChatMessage(author, match);
-            gameEngine.spawnFlag(match);
-          }
+          const snippet = item.snippet || {};
+          const authorDetails = item.authorDetails || {};
+          const author = (authorDetails.displayName || "Viewer").trim();
+          const avatarUrl = authorDetails.profileImageUrl || null;
+          const messageId = item.id || `${snippet.publishedAt || Date.now()}-${Math.random()}`;
+          const channelId = authorDetails.channelId || snippet.authorChannelId || author;
+          const spawned = gameEngine.spawnPlayer({
+            id: `${channelId}:${messageId}`,
+            name: author,
+            avatarUrl,
+          });
+          if (spawned) gameEngine.addChatMessage(author, snippet.displayMessage || "joined");
         });
       }
       ytNextPageToken = data.nextPageToken || "";
@@ -163,14 +168,78 @@ async function resolveRtmpUrl(rtmpUrl: string): Promise<string> {
   }
 }
 
+function cleanupFfmpegProcess(proc: ChildProcess) {
+  const onFrame = (proc as any)._onFrame;
+  if (onFrame) {
+    gameEngine.off("frame", onFrame);
+    (proc as any)._onFrame = null;
+  }
+
+  const onBounce = (proc as any)._onBounce;
+  if (onBounce) {
+    gameEngine.off("bounce", onBounce);
+    (proc as any)._onBounce = null;
+  }
+
+  if (ffmpegProc === proc) {
+    if (audioLoopTimer) {
+      clearInterval(audioLoopTimer);
+      audioLoopTimer = null;
+    }
+    pendingBeeps = [];
+    pendingBeepOffset = 0;
+  }
+}
+
+function stopFfmpegProcess() {
+  const proc = ffmpegProc;
+  if (!proc) return;
+
+  (proc as any)._intentionalStop = true;
+  cleanupFfmpegProcess(proc);
+
+  try {
+    const videoIn = proc.stdio[0] as Writable;
+    if (!videoIn.destroyed) videoIn.end();
+    const audioIn = proc.stdio[3] as Writable;
+    if (audioIn && !audioIn.destroyed) audioIn.end();
+    proc.kill("SIGKILL");
+  } catch (_) {}
+
+  if (ffmpegProc === proc) ffmpegProc = null;
+}
+
+function endLiveSession(error?: string) {
+  isStreaming = false;
+  stopYouTubePolling();
+  gameEngine.stopAndReset();
+  broadcastToAll({ type: "streamStatus", isStreaming: false, ...(error ? { error } : {}) });
+}
+
+function handleFfmpegExit(proc: ChildProcess, error?: string) {
+  if ((proc as any)._handledExit) return;
+  (proc as any)._handledExit = true;
+
+  cleanupFfmpegProcess(proc);
+  if (ffmpegProc === proc) ffmpegProc = null;
+
+  if ((proc as any)._intentionalStop) return;
+  if (isStreaming) endLiveSession(error);
+}
+
 async function startStream(rtmpUrl: string) {
-  if (ffmpegProc) { stopStream(); }
+  const startToken = ++streamStartToken;
+  if (ffmpegProc) stopFfmpegProcess();
 
   storedRtmpUrl = rtmpUrl;
 
   // Pre-resolve hostname so ffmpeg-static (static musl binary) doesn't hit
   // systemd-resolved DNS stub (127.0.0.53) which static binaries can't use
   const resolvedUrl = await resolveRtmpUrl(rtmpUrl);
+  if (startToken !== streamStartToken) {
+    console.log("Stream start cancelled before FFmpeg launch.");
+    return;
+  }
   console.log("Streaming to:", resolvedUrl);
 
   const args = [
@@ -201,34 +270,27 @@ async function startStream(rtmpUrl: string) {
   ffmpegProc = spawn(ffmpegPath, args, {
     stdio: ["pipe", "ignore", "pipe", "pipe"],
   });
+  const proc = ffmpegProc;
 
-  const videoIn = ffmpegProc.stdio[0] as Writable;
-  const audioIn = ffmpegProc.stdio[3] as Writable;
+  const videoIn = proc.stdio[0] as Writable;
+  const audioIn = proc.stdio[3] as Writable;
 
   videoIn.on("error", (err) => {
     console.error("FFmpeg video stdin error:", err.message);
   });
 
-  (ffmpegProc.stdio[2] as NodeJS.ReadableStream).on("data", (chunk: Buffer) => {
+  (proc.stdio[2] as NodeJS.ReadableStream).on("data", (chunk: Buffer) => {
     process.stderr.write("[ffmpeg] " + chunk.toString());
   });
 
-  ffmpegProc.on("close", (code) => {
+  proc.on("close", (code) => {
     console.log(`FFmpeg exited with code ${code}`);
-    ffmpegProc = null;
-    if (audioLoopTimer) { clearInterval(audioLoopTimer); audioLoopTimer = null; }
-    if (isStreaming) {
-      isStreaming = false;
-      broadcastToAll({ type: "streamStatus", isStreaming: false, error: `FFmpeg exited (code ${code})` });
-    }
+    handleFfmpegExit(proc, `FFmpeg exited (code ${code})`);
   });
 
-  ffmpegProc.on("error", (err) => {
+  proc.on("error", (err) => {
     console.error("FFmpeg process error:", err.message);
-    ffmpegProc = null;
-    if (audioLoopTimer) { clearInterval(audioLoopTimer); audioLoopTimer = null; }
-    isStreaming = false;
-    broadcastToAll({ type: "streamStatus", isStreaming: false, error: err.message });
+    handleFfmpegExit(proc, err.message);
   });
 
   isStreaming = true;
@@ -236,12 +298,12 @@ async function startStream(rtmpUrl: string) {
 
   // ── Video feed: pipe JPEG frames from game engine → FFmpeg stdin (pipe:0) ──
   const onFrame = (jpeg: Buffer) => {
-    if (ffmpegProc && !videoIn.destroyed) {
+    if (ffmpegProc === proc && !videoIn.destroyed) {
       try { videoIn.write(jpeg); } catch (_) {}
     }
   };
   gameEngine.on("frame", onFrame);
-  (ffmpegProc as any)._onFrame = onFrame;
+  (proc as any)._onFrame = onFrame;
 
   // ── Audio feed: send 30fps chunks of PCM (silence + beeps) → pipe:3 ──
   pendingBeeps = [];
@@ -255,28 +317,16 @@ async function startStream(rtmpUrl: string) {
   // ── On bounce, queue a beep ──
   const onBounce = () => { pendingBeeps.push(Buffer.from(BEEP_BUF)); };
   gameEngine.on("bounce", onBounce);
-  (ffmpegProc as any)._onBounce = onBounce;
+  (proc as any)._onBounce = onBounce;
+
+  gameEngine.start();
 }
 
 function stopStream() {
-  if (ffmpegProc) {
-    const onFrame = (ffmpegProc as any)._onFrame;
-    if (onFrame) gameEngine.off("frame", onFrame);
-    const onBounce = (ffmpegProc as any)._onBounce;
-    if (onBounce) gameEngine.off("bounce", onBounce);
-    if (audioLoopTimer) { clearInterval(audioLoopTimer); audioLoopTimer = null; }
-    pendingBeeps = []; pendingBeepOffset = 0;
-    try {
-      const videoIn = ffmpegProc.stdio[0] as Writable;
-      if (!videoIn.destroyed) videoIn.end();
-      ffmpegProc.kill("SIGKILL");
-    } catch (_) {}
-    ffmpegProc = null;
-  }
-  isStreaming = false;
-  stopYouTubePolling();
-  broadcastToAll({ type: "streamStatus", isStreaming: false });
-  console.log("Stream stopped.");
+  streamStartToken++;
+  stopFfmpegProcess();
+  endLiveSession();
+  console.log("Stream and game stopped.");
 }
 
 // ─── WebSocket broadcast ───────────────────────────────────────────────────────
@@ -389,10 +439,14 @@ async function startServer() {
             break;
           }
 
+          case "spawnPlayer":
           case "spawnFlag": {
-            const country = (msg.country || "").trim().toLowerCase();
-            const spawned = gameEngine.spawnFlag(country);
-            if (spawned) gameEngine.addChatMessage(msg.user || "Admin", country);
+            const name = (msg.name || msg.country || "").trim();
+            const spawned = gameEngine.spawnPlayer({
+              id: `admin:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+              name,
+            });
+            if (spawned) gameEngine.addChatMessage(name || msg.user || "Admin", "joined");
             break;
           }
         }

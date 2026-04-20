@@ -194,8 +194,8 @@ export default function App() {
 
   const handleSpawn = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!spawnInput.trim()) return;
-    send({ type: 'spawnFlag', country: spawnInput.trim().toLowerCase(), user: 'Admin' });
+    if (!game.isStreaming || !spawnInput.trim()) return;
+    send({ type: 'spawnPlayer', name: spawnInput.trim(), user: 'Admin' });
     setSpawnInput('');
   };
 
@@ -359,25 +359,26 @@ export default function App() {
           </section>
 
           <section className="flex-1 flex flex-col min-h-0">
-            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4">Recent Spawns</h3>
+            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4">Recent Players</h3>
             <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
               {game.chatMessages.slice(0, 10).map(msg => (
                 <div key={msg.id} className="text-xs bg-white/5 p-3 rounded-lg border border-white/5">
                   <span className="text-blue-400 font-bold">{msg.user}</span>
-                  <span className="text-gray-400 mx-1">spawned</span>
-                  <span className="text-white font-black uppercase">{msg.msg}</span>
+                  <span className="text-gray-400 mx-1">joined</span>
+                  <span className="text-white font-black uppercase">arena</span>
                 </div>
               ))}
             </div>
           </section>
 
           <form onSubmit={handleSpawn} className="mt-auto">
-            <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-2 block">Manual Spawn</label>
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-2 block">Manual Player</label>
             <div className="flex gap-2">
               <input type="text" value={spawnInput} onChange={e => setSpawnInput(e.target.value)}
-                placeholder="Country Name..."
-                className="flex-1 bg-[#0f172a] border border-white/10 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-blue-500 transition-colors" />
-              <button type="submit" className="bg-blue-600 p-3 rounded-lg hover:bg-blue-700 transition-colors">
+                disabled={!game.isStreaming}
+                placeholder={game.isStreaming ? "Username..." : "Start stream first"}
+                className="flex-1 bg-[#0f172a] border border-white/10 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" />
+              <button type="submit" disabled={!game.isStreaming} className="bg-blue-600 p-3 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                 <Send size={18} />
               </button>
             </div>
@@ -399,7 +400,7 @@ export default function App() {
                   <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
                 </div>
                 <h2 className="text-xl font-black uppercase mb-2">Ready to Stream</h2>
-                <p className="text-gray-400 text-sm">Game is running and auto-spawning 4 countries.</p>
+                <p className="text-gray-400 text-sm">Game is paused. Starting the stream will add one bot and wait for chat.</p>
                 <div className="mt-8 flex gap-3">
                    <a href="/preview" target="_blank" className="px-5 py-2 bg-white/5 hover:bg-white/10 rounded-full text-xs font-bold uppercase transition-all">Open Preview</a>
                 </div>
