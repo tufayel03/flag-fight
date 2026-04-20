@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import { WebSocketServer, WebSocket } from "ws";
@@ -10,6 +11,7 @@ import { GameEngine } from "./game-engine.js";
 import type { PlayerJoinedEvent, WinnerEvent } from "./game-engine.js";
 
 const ffmpegPath = ffmpegStatic as string;
+const DEFAULT_YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY?.trim() || "";
 
 // ─── Server-side audio: PCM beep on bounce ────────────────────────────────────
 const SAMPLE_RATE = 44100;
@@ -162,7 +164,7 @@ let storedRtmpUrl = "";
 let streamStartToken = 0;
 
 // ─── YouTube chat polling state ───────────────────────────────────────────────
-let ytApiKey = "";
+let ytApiKey = DEFAULT_YOUTUBE_API_KEY;
 let ytVideoId = "";
 let ytChatId = "";
 let ytNextPageToken = "";
@@ -489,7 +491,8 @@ async function startServer() {
           }
 
           case "setCredentials": {
-            ytApiKey = (msg.youtubeApiKey || "").trim();
+            const apiKey = (msg.youtubeApiKey || "").trim();
+            ytApiKey = apiKey || ytApiKey || DEFAULT_YOUTUBE_API_KEY;
             ytVideoId = (msg.youtubeVideoId || "").trim();
             console.log("Credentials stored. YT API key set:", !!ytApiKey, "| VideoId:", ytVideoId || "(none)");
             ws.send(JSON.stringify({ type: "credentialsOk" }));

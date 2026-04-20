@@ -237,7 +237,10 @@ export default function App() {
                   <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">YouTube API Key</label>
                   <input type="password" value={youtubeApiKey} onChange={e => setYoutubeApiKey(e.target.value)}
                     className="w-full bg-gray-50 border border-gray-300 text-gray-900 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-[#FF3D68]"
-                    placeholder="AIzaSy..." />
+                    placeholder="Saved default key will be used" />
+                  <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                    Leave empty to use saved default key
+                  </p>
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">YouTube Video ID</label>
