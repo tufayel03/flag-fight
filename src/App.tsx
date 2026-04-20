@@ -180,14 +180,13 @@ export default function App() {
     } else {
       const url = streamUrlRef.current;
       const key = streamKeyRef.current;
-      const fullRtmpUrl = url.endsWith('/') ? `${url}${key}` : `${url}/${key}`;
       // Re-send credentials in case they changed since login
       send({
         type: 'setCredentials',
         youtubeApiKey: youtubeApiKeyRef.current,
         youtubeVideoId: youtubeVideoIdRef.current,
       });
-      send({ type: 'startStream', rtmpUrl: fullRtmpUrl });
+      send({ type: 'startStream', streamUrl: url, streamKey: key });
     }
   };
 
@@ -264,7 +263,10 @@ export default function App() {
                   <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">Stream Key</label>
                   <input type="password" value={streamKey} onChange={e => setStreamKey(e.target.value)}
                     className="w-full bg-gray-50 border border-gray-300 text-gray-900 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-[#FF3D68]"
-                    placeholder="xxxx-xxxx-xxxx-xxxx" required />
+                    placeholder="Saved stream key will be used" />
+                  <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                    Leave empty to use saved stream key
+                  </p>
                 </div>
               </div>
             </div>

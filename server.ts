@@ -12,6 +12,7 @@ import type { PlayerJoinedEvent, WinnerEvent } from "./game-engine.js";
 
 const ffmpegPath = ffmpegStatic as string;
 const DEFAULT_YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY?.trim() || "";
+const DEFAULT_YOUTUBE_STREAM_KEY = process.env.YOUTUBE_STREAM_KEY?.trim() || "";
 
 // ─── Server-side audio: PCM beep on bounce ────────────────────────────────────
 const SAMPLE_RATE = 44100;
@@ -250,6 +251,26 @@ async function resolveRtmpUrl(rtmpUrl: string): Promise<string> {
   }
 }
 
+function buildRtmpUrl(streamUrl: string, streamKey: string): string {
+  const base = streamUrl.trim();
+  const key = streamKey.trim();
+  if (!base || !key) return "";
+  return base.endsWith("/") ? `${base}${key}` : `${base}/${key}`;
+}
+
+function redactRtmpUrl(rtmpUrl: string): string {
+  try {
+    const url = new URL(rtmpUrl);
+    const parts = url.pathname.split("/");
+    if (parts.length > 0) parts[parts.length - 1] = "[stream-key]";
+    url.pathname = parts.join("/");
+    url.search = "";
+    return url.toString();
+  } catch (_) {
+    return rtmpUrl ? "[rtmp-url-redacted]" : "";
+  }
+}
+
 function cleanupFfmpegProcess(proc: ChildProcess) {
   const onFrame = (proc as any)._onFrame;
   if (onFrame) {
@@ -334,7 +355,11 @@ async function startStream(rtmpUrl: string) {
     console.log("Stream start cancelled before FFmpeg launch.");
     return;
   }
-  console.log("Streaming to:", resolvedUrl);
+  const logRtmpUrl = redactRtmpUrl(rtmpUrl);
+  const logResolvedUrl = redactRtmpUrl(resolvedUrl);
+  const redactStreamLogText = (text: string) =>
+    text.split(rtmpUrl).join(logRtmpUrl).split(resolvedUrl).join(logResolvedUrl);
+  console.log("Streaming to:", logResolvedUrl);
 
   const args = [
     "-f", "image2pipe",
@@ -374,7 +399,7 @@ async function startStream(rtmpUrl: string) {
   });
 
   (proc.stdio[2] as NodeJS.ReadableStream).on("data", (chunk: Buffer) => {
-    process.stderr.write("[ffmpeg] " + chunk.toString());
+    process.stderr.write("[ffmpeg] " + redactStreamLogText(chunk.toString()));
   });
 
   proc.on("close", (code) => {
@@ -388,7 +413,7 @@ async function startStream(rtmpUrl: string) {
   });
 
   isStreaming = true;
-  console.log(`FFmpeg stream started → ${rtmpUrl}`);
+  console.log(`FFmpeg stream started -> ${logRtmpUrl}`);
 
   // ── Video feed: pipe JPEG frames from game engine → FFmpeg stdin (pipe:0) ──
   const onFrame = (jpeg: Buffer) => {
@@ -505,11 +530,20 @@ async function startServer() {
           }
 
           case "startStream": {
-            if (!msg.rtmpUrl) {
-              ws.send(JSON.stringify({ type: "error", message: "No RTMP URL provided" }));
+            const streamUrl = (msg.streamUrl || "").trim();
+            const streamKey = (msg.streamKey || "").trim() || DEFAULT_YOUTUBE_STREAM_KEY;
+            const rtmpUrl = streamUrl
+              ? buildRtmpUrl(streamUrl, streamKey)
+              : (msg.rtmpUrl || "").trim();
+
+            if (!rtmpUrl) {
+              ws.send(JSON.stringify({
+                type: "error",
+                message: streamUrl ? "No stream key configured" : "No RTMP URL provided",
+              }));
               break;
             }
-            startStream(msg.rtmpUrl);
+            startStream(rtmpUrl);
             startYouTubePolling();
             broadcastToAll({ type: "streamStatus", isStreaming: true });
             break;
