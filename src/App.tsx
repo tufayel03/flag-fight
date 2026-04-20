@@ -30,7 +30,6 @@ const DEFAULT_STATE: GameState = {
 export default function App() {
   // Auth
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
 
@@ -141,7 +140,7 @@ export default function App() {
             setIsLoggedIn(true);
             setLoginError('');
           } else {
-            setLoginError('Invalid email or password');
+            setLoginError('Invalid password');
           }
           break;
         case 'streamStatus':
@@ -166,7 +165,7 @@ export default function App() {
   // ─── Handlers ─────────────────────────────────────────────────────────────
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    send({ type: 'login', email, password });
+    send({ type: 'login', password });
     // Also send credentials now while values are fresh (avoids stale closure)
     send({
       type: 'setCredentials',
@@ -224,12 +223,6 @@ export default function App() {
           )}
 
           <form onSubmit={handleLogin} className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">Email</label>
-              <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-                className="w-full bg-gray-50 border border-gray-300 text-gray-900 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-[#FF3D68]"
-                placeholder="admin@bidnsteal.com" required />
-            </div>
             <div>
               <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">Password</label>
               <input type="password" value={password} onChange={e => setPassword(e.target.value)}
@@ -385,27 +378,34 @@ export default function App() {
           </form>
         </div>
 
-        {/* Center Preview - 9:16 Vertical Focus */}
+        {/* Center Status - preview disabled to save VPS bandwidth */}
         <main className="flex-1 bg-[#0f172a] relative flex items-center justify-center p-8">
-          <div className="relative h-full aspect-[9/16] bg-black shadow-[0_0_50px_rgba(0,0,0,0.5)] rounded-2xl overflow-hidden border border-white/10">
-            {game.isStreaming ? (
-              <img
-                src="/preview"
-                alt="Live Preview"
-                className="w-full h-full object-contain"
-              />
-            ) : (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-8">
-                <div className="w-20 h-20 bg-blue-500/20 rounded-full flex items-center justify-center mb-6">
-                  <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+          <div className="relative w-full max-w-2xl bg-[#111c2f] border border-white/10 rounded-lg p-8 shadow-[0_0_50px_rgba(0,0,0,0.35)]">
+            <div className="text-center">
+              <div className={`mx-auto w-16 h-16 rounded-full flex items-center justify-center mb-6 ${game.isStreaming ? 'bg-green-500/15' : 'bg-blue-500/15'}`}>
+                <div className={`w-6 h-6 rounded-full ${game.isStreaming ? 'bg-green-500 animate-pulse' : 'bg-blue-500'}`}></div>
+              </div>
+              <h2 className="text-2xl font-black uppercase mb-3">
+                {game.isStreaming ? 'Stream Running' : 'Ready To Stream'}
+              </h2>
+              <p className="text-gray-400 text-sm max-w-md mx-auto">
+                Browser preview is disabled to save VPS bandwidth. The backend still renders and streams the full game to YouTube.
+              </p>
+              <div className="mt-8 grid grid-cols-3 gap-3 text-center">
+                <div className="bg-[#0f172a] border border-white/5 rounded-lg p-4">
+                  <div className="text-2xl font-black">{game.flagCount}</div>
+                  <div className="text-[9px] text-gray-500 uppercase font-bold">In Arena</div>
                 </div>
-                <h2 className="text-xl font-black uppercase mb-2">Ready to Stream</h2>
-                <p className="text-gray-400 text-sm">Game is paused. Starting the stream will add one bot and wait for chat.</p>
-                <div className="mt-8 flex gap-3">
-                   <a href="/preview" target="_blank" className="px-5 py-2 bg-white/5 hover:bg-white/10 rounded-full text-xs font-bold uppercase transition-all">Open Preview</a>
+                <div className="bg-[#0f172a] border border-white/5 rounded-lg p-4">
+                  <div className="text-2xl font-black">{Object.keys(game.leaderboard).length}</div>
+                  <div className="text-[9px] text-gray-500 uppercase font-bold">Winners</div>
+                </div>
+                <div className="bg-[#0f172a] border border-white/5 rounded-lg p-4">
+                  <div className={`text-lg font-black uppercase ${stateColor}`}>{game.gameState}</div>
+                  <div className="text-[9px] text-gray-500 uppercase font-bold">State</div>
                 </div>
               </div>
-            )}
+            </div>
             
             <div className="absolute top-4 right-4 flex gap-2">
               <div className="bg-black/50 backdrop-blur-md px-3 py-1.5 rounded-full flex items-center gap-2 border border-white/10">

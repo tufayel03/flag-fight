@@ -463,29 +463,9 @@ async function startServer() {
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server });
 
-  // ── MJPEG live preview endpoint (watch the game in browser) ──
+  // ── Browser preview disabled to avoid spending VPS bandwidth on dashboard video ──
   app.get("/preview", (req, res) => {
-    res.setHeader("Content-Type", "multipart/x-mixed-replace; boundary=--frame");
-    res.setHeader("Cache-Control", "no-cache");
-
-    // Send latest frame immediately
-    const latest = gameEngine.getLastJpeg();
-    if (latest) {
-      res.write(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${latest.length}\r\n\r\n`);
-      res.write(latest);
-      res.write("\r\n");
-    }
-
-    const onFrame = (jpeg: Buffer) => {
-      if (res.destroyed) return;
-      try {
-        res.write(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.length}\r\n\r\n`);
-        res.write(jpeg);
-        res.write("\r\n");
-      } catch (_) {}
-    };
-    gameEngine.on("frame", onFrame);
-    req.on("close", () => gameEngine.off("frame", onFrame));
+    res.status(410).send("Live preview is disabled to save VPS bandwidth.");
   });
 
   // ── WebSocket admin protocol ──
@@ -503,7 +483,7 @@ async function startServer() {
 
         switch (msg.type) {
           case "login": {
-            const ok = msg.email === "admin@bidnsteal.com" && msg.password === "Tufayel54321";
+            const ok = msg.password === "Tufayel54321";
             ws.send(JSON.stringify({ type: "loginResult", success: ok }));
             break;
           }
