@@ -533,24 +533,27 @@ export class GameEngine extends EventEmitter {
 
   spawnPlayer(player: PlayerInput): boolean {
     if (!this.isRunning) return false;
-    if (this.gameState === "ENDED") {
-      this.queuedPlayers = [...this.queuedPlayers, player].slice(-100);
-      return true;
-    }
     const name = this.cleanPlayerName(player.name);
     if (!name) return false;
+    const playerId = this.getPlayerId(player, name);
+    if (this.gameState === "ENDED") {
+      if (this.hasQueuedPlayer(playerId)) return false;
+      this.queuedPlayers = [...this.queuedPlayers, { ...player, id: playerId, name }].slice(-100);
+      return true;
+    }
+    if (this.flags.some((f) => f.playerId === playerId)) return false;
 
     const x = CENTER_X + (Math.random() - 0.5) * 150;
     const y = CENTER_Y + (Math.random() - 0.5) * 150;
     const body = Matter.Bodies.circle(x, y, 45, { restitution: 1.0, friction: 0, frictionAir: 0, density: 0.1 });
     Matter.Body.setVelocity(body, { x: (Math.random() - 0.5) * FLAG_SPEED, y: (Math.random() - 0.5) * FLAG_SPEED });
 
-    const uniqueEntryId = `${player.id || name}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const uniqueEntryId = `${playerId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const avatarUrl = (player.avatarUrl || "").trim() || null;
     const flag: FlagData = {
       id: uniqueEntryId,
       body,
-      playerId: player.id || uniqueEntryId,
+      playerId,
       name,
       avatarUrl,
       isBot: !!player.isBot,
@@ -572,6 +575,14 @@ export class GameEngine extends EventEmitter {
 
   private cleanPlayerName(name: string) {
     return (name || "Viewer").replace(/\s+/g, " ").trim().slice(0, 40);
+  }
+
+  private getPlayerId(player: PlayerInput, cleanName: string) {
+    return (player.id || cleanName).trim().toLowerCase();
+  }
+
+  private hasQueuedPlayer(playerId: string) {
+    return this.queuedPlayers.some((player) => this.getPlayerId(player, this.cleanPlayerName(player.name)) === playerId);
   }
 
   private truncateName(name: string, maxLength: number) {

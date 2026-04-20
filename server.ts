@@ -122,10 +122,9 @@ function startYouTubePolling() {
           const authorDetails = item.authorDetails || {};
           const author = (authorDetails.displayName || "Viewer").trim();
           const avatarUrl = authorDetails.profileImageUrl || null;
-          const messageId = item.id || `${snippet.publishedAt || Date.now()}-${Math.random()}`;
           const channelId = authorDetails.channelId || snippet.authorChannelId || author;
           const spawned = gameEngine.spawnPlayer({
-            id: `${channelId}:${messageId}`,
+            id: String(channelId),
             name: author,
             avatarUrl,
           });
@@ -443,7 +442,7 @@ async function startServer() {
           case "spawnFlag": {
             const name = (msg.name || msg.country || "").trim();
             const spawned = gameEngine.spawnPlayer({
-              id: `admin:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+              id: `admin:${name.toLowerCase()}`,
               name,
             });
             if (spawned) gameEngine.addChatMessage(name || msg.user || "Admin", "joined");
