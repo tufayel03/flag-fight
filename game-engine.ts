@@ -34,6 +34,11 @@ const BOMB_MIN_DELAY_MS = 6500;
 const BOMB_MAX_DELAY_MS = 9500;
 const BOMB_RADIUS = 115;
 const BOMB_VISUAL_RADIUS = 22;
+const SUDDEN_DEATH_COUNT = 10;
+const FINAL_BOMB_MIN_DELAY_MS = 3600;
+const FINAL_BOMB_MAX_DELAY_MS = 5400;
+const HYPE_BANNER_MS = 2200;
+const MILESTONE_COUNTS = [25, 10, 5, 3, 2];
 
 // ─── Country map ──────────────────────────────────────────────────────────────
 export const COUNTRIES: Record<string, { code: string; emoji: string }> = {
@@ -192,9 +197,13 @@ export class GameEngine extends EventEmitter {
   private leaderboard: Record<string, number> = {};
   private chatMsgs: ChatMsg[] = [];
   private imageCache = new Map<string, Promise<Image | null>>();
+  private resolvedImageCache = new Map<string, Image | null>();
   private bombs: BombData[] = [];
   private nextBombAt = 0;
   private bombSerial = 0;
+  private roundNumber = 0;
+  private lastMilestoneCount = DEFAULT_COUNTRY_COUNT;
+  private hypeBanner: { text: string; subtext: string; color: string; until: number } | null = null;
   private globalAngle = 0;
   private renderTimer: ReturnType<typeof setInterval> | null = null;
   private gameLoopTimer: ReturnType<typeof setInterval> | null = null;
@@ -274,6 +283,8 @@ export class GameEngine extends EventEmitter {
         }
       }
 
+      if (this.gameState === "PLAYING" && !this.endingRound) this.updateMilestones();
+
       if (this.gameState === "PLAYING" && !this.endingRound && this.flags.length <= 1) {
         this.endingRound = true;
         if (this.flags.length === 1) this.endRound(this.flags[0]);
@@ -336,6 +347,8 @@ export class GameEngine extends EventEmitter {
     this.lastGapRotation = 0;
     this.bombs = [];
     this.nextBombAt = 0;
+    this.lastMilestoneCount = DEFAULT_COUNTRY_COUNT;
+    this.hypeBanner = null;
     if (this.isRunning) {
       this.flushQueuedPlayers();
       this.ensureDefaultCountries();
@@ -418,7 +431,10 @@ export class GameEngine extends EventEmitter {
   }
 
   private scheduleNextBomb(now: number) {
-    this.nextBombAt = now + BOMB_MIN_DELAY_MS + Math.random() * (BOMB_MAX_DELAY_MS - BOMB_MIN_DELAY_MS);
+    const finalPhase = this.flags.length <= SUDDEN_DEATH_COUNT;
+    const minDelay = finalPhase ? FINAL_BOMB_MIN_DELAY_MS : BOMB_MIN_DELAY_MS;
+    const maxDelay = finalPhase ? FINAL_BOMB_MAX_DELAY_MS : BOMB_MAX_DELAY_MS;
+    this.nextBombAt = now + minDelay + Math.random() * (maxDelay - minDelay);
   }
 
   private spawnBomb(now: number) {
@@ -464,6 +480,30 @@ export class GameEngine extends EventEmitter {
     return targets.find((target) => target.distance <= BOMB_RADIUS)?.flag || targets[0]?.flag || null;
   }
 
+  private updateMilestones() {
+    if (this.flags.length <= 1) return;
+    const crossed = MILESTONE_COUNTS
+      .filter((count) => this.flags.length <= count && this.lastMilestoneCount > count)
+      .pop();
+    if (!crossed) return;
+
+    this.lastMilestoneCount = crossed;
+    const messages: Record<number, { text: string; subtext: string; color: string }> = {
+      25: { text: "HALF THE FIELD IS GONE", subtext: "The arena is getting dangerous.", color: "#f97316" },
+      10: { text: "FINAL 10", subtext: "Bombs are dropping faster now.", color: "#ef4444" },
+      5: { text: "TOP 5", subtext: "One clean escape can change everything.", color: "#FF3D68" },
+      3: { text: "FINAL 3", subtext: "Every bounce matters.", color: "#facc15" },
+      2: { text: "HEAD TO HEAD", subtext: "One country becomes champion.", color: "#ffffff" },
+    };
+    const message = messages[crossed];
+    this.setHypeBanner(message.text, message.subtext, message.color);
+    if (crossed === SUDDEN_DEATH_COUNT) this.scheduleNextBomb(Date.now());
+  }
+
+  private setHypeBanner(text: string, subtext: string, color = "#ffffff", durationMs = HYPE_BANNER_MS) {
+    this.hypeBanner = { text, subtext, color, until: Date.now() + durationMs };
+  }
+
   private startGameLoop() {
     if (this.gameLoopTimer) return;
     this.ensureDefaultCountries();
@@ -479,7 +519,10 @@ export class GameEngine extends EventEmitter {
           this.countdown = 0; 
           this.gapGrowthRotations = 0;
           this.lastGapRotation = Math.floor(this.globalAngle / (Math.PI * 2));
+          this.roundNumber++;
+          this.lastMilestoneCount = this.flags.length;
           this.scheduleNextBomb(Date.now());
+          this.setHypeBanner(`ROUND ${this.roundNumber}`, "50 countries. Last flag wins.", "#60a5fa", 1800);
           this.emit("roundStart");
           // Boost initial speed
           this.flags.forEach(f => {
@@ -515,6 +558,7 @@ export class GameEngine extends EventEmitter {
 
   private render() {
     const ctx = this.ctx;
+    const championName = this.getChampionName();
 
     // Background Gradient (Sleek Dark Look)
     const grad = ctx.createLinearGradient(0, 0, 0, STREAM_H);
@@ -580,6 +624,7 @@ export class GameEngine extends EventEmitter {
       ctx.strokeText(this.truncateName(flag.name, 12), 0, FLAG_RADIUS + 18);
       ctx.fillStyle = "#ffffff";
       ctx.fillText(this.truncateName(flag.name, 12), 0, FLAG_RADIUS + 18);
+      if (championName === flag.name) this.drawCrown(ctx, 0, -FLAG_RADIUS - 18);
       ctx.restore();
     });
 
@@ -635,10 +680,35 @@ export class GameEngine extends EventEmitter {
       const [country, wins] = entries[entryIndex];
       const y = 92 + i * 50;
       const name = this.truncateName(country, 16).toUpperCase();
+      const flagImg = this.getCountryFlagImage(country);
+      const emoji = this.getCountryEmoji(country);
+      const flagX = 52;
+      const flagW = 58;
+      const flagH = 36;
+
+      ctx.save();
+      ctx.fillStyle = "rgba(255,255,255,0.12)";
+      ctx.roundRect(flagX - 4, y - flagH / 2 - 4, flagW + 8, flagH + 8, 8);
+      ctx.fill();
+      if (flagImg) {
+        ctx.beginPath();
+        ctx.roundRect(flagX, y - flagH / 2, flagW, flagH, 6);
+        ctx.clip();
+        ctx.drawImage(flagImg, flagX, y - flagH / 2, flagW, flagH);
+      } else {
+        ctx.font = "bold 30px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(emoji, flagX + flagW / 2, y + 10);
+      }
+      ctx.restore();
+
       ctx.fillStyle = entryIndex === 0 ? "#FF3D68" : "#ffffff";
-      ctx.font = "bold 28px sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText(`#${entryIndex + 1}  ${this.getCountryEmoji(country)}  ${name}  ${wins}W`, 280, y);
+      ctx.font = "bold 26px sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText(`#${entryIndex + 1}  ${name}`, 128, y + 8);
+      ctx.textAlign = "right";
+      ctx.fillText(`${wins}W`, 520, y + 8);
     }
     if (entries.length > visibleCount) {
       ctx.fillStyle = "rgba(255,255,255,0.45)";
@@ -661,6 +731,9 @@ export class GameEngine extends EventEmitter {
     ctx.restore();
 
     // ── Overlays ──
+    this.renderRoundHud(ctx);
+    this.renderHypeBanner(ctx);
+
     if (this.gameState === "COUNTDOWN") {
       ctx.fillStyle = "rgba(0,0,0,0.3)";
       ctx.fillRect(0, 0, STREAM_W, STREAM_H);
@@ -717,6 +790,78 @@ export class GameEngine extends EventEmitter {
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
+  private renderRoundHud(ctx: SKRSContext2D) {
+    if (this.gameState !== "PLAYING" && this.gameState !== "COUNTDOWN") return;
+
+    const panelY = Math.min(STREAM_H - 105, CENTER_Y + this.currentRadius + 45);
+    const finalPhase = this.gameState === "PLAYING" && this.flags.length <= SUDDEN_DEATH_COUNT;
+    const armedBomb = this.bombs.some((bomb) => !bomb.exploded);
+    const nextBombSeconds = Math.max(0, Math.ceil((this.nextBombAt - Date.now()) / 1000));
+    const bombText = armedBomb ? "BOMB ARMED" : `NEXT BOMB ${nextBombSeconds}s`;
+    const statusText = this.gameState === "COUNTDOWN"
+      ? `ROUND ${Math.max(1, this.roundNumber + 1)} STARTING`
+      : `ROUND ${this.roundNumber}  |  ${this.flags.length} SURVIVORS  |  ${bombText}`;
+
+    ctx.save();
+    ctx.fillStyle = finalPhase ? "rgba(127, 29, 29, 0.78)" : "rgba(15, 23, 42, 0.78)";
+    ctx.strokeStyle = finalPhase ? "rgba(239, 68, 68, 0.95)" : "rgba(96, 165, 250, 0.55)";
+    ctx.lineWidth = 2;
+    ctx.roundRect(70, panelY, 580, 48, 8);
+    ctx.fill();
+    ctx.stroke();
+    ctx.textAlign = "center";
+    ctx.fillStyle = finalPhase ? "#fee2e2" : "#ffffff";
+    ctx.font = "bold 24px sans-serif";
+    ctx.fillText(statusText, CENTER_X, panelY + 31);
+    ctx.restore();
+  }
+
+  private renderHypeBanner(ctx: SKRSContext2D) {
+    if (!this.hypeBanner) return;
+    const now = Date.now();
+    if (this.hypeBanner.until <= now) {
+      this.hypeBanner = null;
+      return;
+    }
+
+    const remaining = this.hypeBanner.until - now;
+    const alpha = Math.min(1, remaining / 300);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = "rgba(0,0,0,0.68)";
+    ctx.fillRect(0, CENTER_Y - 190, STREAM_W, 112);
+    ctx.textAlign = "center";
+    ctx.fillStyle = this.hypeBanner.color;
+    ctx.font = "bold 46px sans-serif";
+    ctx.fillText(this.hypeBanner.text, CENTER_X, CENTER_Y - 145);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 22px sans-serif";
+    ctx.fillText(this.hypeBanner.subtext, CENTER_X, CENTER_Y - 108);
+    ctx.restore();
+  }
+
+  private drawCrown(ctx: SKRSContext2D, x: number, y: number) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.fillStyle = "#facc15";
+    ctx.strokeStyle = "rgba(0,0,0,0.65)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-18, 10);
+    ctx.lineTo(-13, -8);
+    ctx.lineTo(-4, 3);
+    ctx.lineTo(0, -12);
+    ctx.lineTo(5, 3);
+    ctx.lineTo(14, -8);
+    ctx.lineTo(18, 10);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#fef3c7";
+    ctx.fillRect(-15, 8, 30, 5);
+    ctx.restore();
+  }
+
   private renderBombs(ctx: SKRSContext2D) {
     const now = Date.now();
     this.bombs.forEach((bomb) => {
@@ -909,10 +1054,23 @@ export class GameEngine extends EventEmitter {
   private loadCachedImage(url: string): Promise<Image | null> {
     let pending = this.imageCache.get(url);
     if (!pending) {
-      pending = loadImage(url).catch(() => null);
+      pending = loadImage(url)
+        .then((img) => {
+          this.resolvedImageCache.set(url, img);
+          return img;
+        })
+        .catch(() => {
+          this.resolvedImageCache.set(url, null);
+          return null;
+        });
       this.imageCache.set(url, pending);
     }
     return pending;
+  }
+
+  private getCachedImage(url: string): Image | null {
+    if (!this.imageCache.has(url)) this.loadCachedImage(url).catch(() => {});
+    return this.resolvedImageCache.get(url) || null;
   }
 
   private truncateName(name: string, maxLength: number) {
@@ -925,9 +1083,20 @@ export class GameEngine extends EventEmitter {
     return initials || "?";
   }
 
+  private getChampionName() {
+    const [champion] = Object.entries(this.leaderboard).sort(([, a], [, b]) => b - a)[0] || [];
+    return champion || null;
+  }
+
   private getCountryEmoji(displayName: string) {
     const country = this.findCountryInText(displayName);
     return country ? COUNTRIES[country].emoji : "";
+  }
+
+  private getCountryFlagImage(displayName: string): Image | null {
+    const country = this.findCountryInText(displayName);
+    if (!country) return null;
+    return this.getCachedImage(getFlagImageUrl(COUNTRIES[country].code));
   }
 
   addChatMessage(user: string, msg: string) {
@@ -1006,6 +1175,9 @@ export class GameEngine extends EventEmitter {
     this.lastGapRotation = 0;
     this.bombs = [];
     this.nextBombAt = 0;
+    this.roundNumber = 0;
+    this.lastMilestoneCount = DEFAULT_COUNTRY_COUNT;
+    this.hypeBanner = null;
   }
 
   private removeAllFlags() {

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Send } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -58,44 +58,6 @@ export default function App() {
 
   const wsRef = useRef<WebSocket | null>(null);
 
-  // ─── Audio context for bounce beep ───────────────────────────────────────────
-  const audioCtxRef = useRef<AudioContext | null>(null);
-
-  const playBounceBeep = useCallback(() => {
-    try {
-      if (!audioCtxRef.current) {
-        audioCtxRef.current = new AudioContext();
-      }
-      const ctx = audioCtxRef.current;
-      if (ctx.state === 'suspended') ctx.resume();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(440, ctx.currentTime);
-      gain.gain.setValueAtTime(0.35, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.12);
-    } catch (_) {}
-  }, []);
-
-  // ─── Speech synthesis winner announcement ─────────────────────────────────────
-  const prevGameStateRef = useRef<string>('WAITING');
-  const announceWinner = useCallback((country: string) => {
-    if (!('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(
-      `The winner is ${country}`
-    );
-    utter.lang = 'en-US';
-    utter.rate = 0.95;
-    utter.pitch = 1.1;
-    utter.volume = 1;
-    window.speechSynthesis.speak(utter);
-  }, []);
-
   // ─── WebSocket connection ─────────────────────────────────────────────────
   useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -110,16 +72,6 @@ export default function App() {
       switch (msg.type) {
         case 'state':
           setGame(prev => {
-            // Announce winner when transitioning into ENDED state
-            if (
-              prevGameStateRef.current !== 'ENDED' &&
-              msg.gameState === 'ENDED' &&
-              msg.winner
-            ) {
-              const country = msg.winner.country.replace(/\b\w/g, (l: string) => l.toUpperCase());
-              announceWinner(country);
-            }
-            prevGameStateRef.current = msg.gameState;
             return {
               gameState: msg.gameState,
               countdown: msg.countdown,
@@ -131,9 +83,6 @@ export default function App() {
               currentQuality: msg.currentQuality || prev.currentQuality
             };
           });
-          break;
-        case 'bounce':
-          playBounceBeep();
           break;
         case 'loginResult':
           if (msg.success) {

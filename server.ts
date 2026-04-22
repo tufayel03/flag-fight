@@ -8,13 +8,13 @@ import { Writable } from "stream";
 import ffmpegStatic from "ffmpeg-static";
 import path from "path";
 import { GameEngine } from "./game-engine.js";
-import type { BombEvent, CountryAddedEvent, WinnerEvent } from "./game-engine.js";
+import type { BombEvent, CountryAddedEvent } from "./game-engine.js";
 
 const ffmpegPath = ffmpegStatic as string;
 const DEFAULT_YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY?.trim() || "";
 const DEFAULT_YOUTUBE_STREAM_KEY = process.env.YOUTUBE_STREAM_KEY?.trim() || "";
 
-// ─── Server-side audio: PCM beep on bounce ────────────────────────────────────
+// ─── Server-side stream audio effects ─────────────────────────────────────────
 const SAMPLE_RATE = 44100;
 const AUDIO_CHANNELS = 2;
 const BYTES_PER_SAMPLE = 2; // s16le
@@ -40,7 +40,6 @@ function generateBeep(freq = 440, durationMs = 90, amplitude = 0.38): Buffer {
   return buf;
 }
 
-const BEEP_BUF = generateBeep(440, 90);
 const COUNTRY_ADD_BUF = Buffer.concat([
   generateBeep(880, 80, 0.22),
   generateSilence(35),
@@ -118,17 +117,6 @@ function generateExplosionEffect(): Buffer {
   return buf;
 }
 
-function generateFanfare(): Buffer {
-  return Buffer.concat([
-    generateBeep(523, 140, 0.28),
-    generateSilence(45),
-    generateBeep(659, 140, 0.28),
-    generateSilence(45),
-    generateBeep(784, 220, 0.30),
-    generateSilence(90),
-  ]);
-}
-
 function decodeAudioToPcm(audio: Buffer): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const decoder = spawn(ffmpegPath, [
@@ -167,17 +155,6 @@ async function synthesizeSpeechPcm(text: string): Promise<Buffer> {
   if (!res.ok) throw new Error(`TTS request failed: ${res.status}`);
   const audio = Buffer.from(await res.arrayBuffer());
   return decodeAudioToPcm(audio);
-}
-
-async function createWinnerAnnouncementPcm(winner: WinnerEvent): Promise<Buffer> {
-  const text = winner.isDraw ? "Nobody won this round" : `The winner is ${winner.name}`;
-  try {
-    const speech = await synthesizeSpeechPcm(text);
-    return Buffer.concat([generateFanfare(), speech]);
-  } catch (err) {
-    console.error("Winner TTS failed, using fanfare only:", err);
-    return generateFanfare();
-  }
 }
 
 function getJoinPromptPcm(): Promise<Buffer> {
@@ -322,18 +299,6 @@ function cleanupFfmpegProcess(proc: ChildProcess) {
   if (onFrame) {
     gameEngine.off("frame", onFrame);
     (proc as any)._onFrame = null;
-  }
-
-  const onBounce = (proc as any)._onBounce;
-  if (onBounce) {
-    gameEngine.off("bounce", onBounce);
-    (proc as any)._onBounce = null;
-  }
-
-  const onWinner = (proc as any)._onWinner;
-  if (onWinner) {
-    gameEngine.off("winner", onWinner);
-    (proc as any)._onWinner = null;
   }
 
   const onBombExploded = (proc as any)._onBombExploded;
@@ -495,19 +460,6 @@ async function startStream(rtmpUrl: string) {
     }
   }, 1000 / AUDIO_FPS);
 
-  // ── On bounce, queue a beep ──
-  const onBounce = () => { queueAudio(Buffer.from(BEEP_BUF)); };
-  gameEngine.on("bounce", onBounce);
-  (proc as any)._onBounce = onBounce;
-
-  const onWinner = (winner: WinnerEvent) => {
-    createWinnerAnnouncementPcm(winner).then((pcm) => {
-      if (ffmpegProc === proc) queueAudio(pcm);
-    }).catch((err) => console.error("Winner announcement error:", err));
-  };
-  gameEngine.on("winner", onWinner);
-  (proc as any)._onWinner = onWinner;
-
   const onBombExploded = (event: BombEvent) => {
     const eliminatedChime = event.country ? generateBeep(180, 180, 0.26) : generateSilence(1);
     queueAudio(Buffer.concat([Buffer.from(EXPLOSION_BUF), generateSilence(50), eliminatedChime]));
@@ -552,11 +504,6 @@ function broadcastToAll(data: object) {
 // Forward game state updates to all connected admins
 gameEngine.on("stateUpdate", (state) => {
   broadcastToAll({ type: "state", ...state, isStreaming });
-});
-
-// Forward bounce events to browser clients so they can play a sound
-gameEngine.on("bounce", () => {
-  broadcastToAll({ type: "bounce" });
 });
 
 // ─── HTTP server start ─────────────────────────────────────────────────────────
