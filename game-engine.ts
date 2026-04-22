@@ -28,6 +28,12 @@ const PLAYER_RING_SPACING = 40;
 const RADIUS_GROWTH_STEP = 20;
 const MAX_RADIUS = 340;
 const GAP_SEGMENTS_PER_ROTATION = 2;
+const BOMB_ARM_MS = 2200;
+const BOMB_BLAST_MS = 750;
+const BOMB_MIN_DELAY_MS = 6500;
+const BOMB_MAX_DELAY_MS = 9500;
+const BOMB_RADIUS = 115;
+const BOMB_VISUAL_RADIUS = 22;
 
 // ─── Country map ──────────────────────────────────────────────────────────────
 export const COUNTRIES: Record<string, { code: string; emoji: string }> = {
@@ -144,11 +150,24 @@ interface FlagData {
   img: Image | null;
 }
 
+interface BombData {
+  id: number;
+  x: number;
+  y: number;
+  plantedAt: number;
+  explodesAt: number;
+  blastUntil: number;
+  exploded: boolean;
+  eliminated?: string;
+}
+
 export type GameStateName = "WAITING" | "COUNTDOWN" | "PLAYING" | "ENDED";
 
 export interface ChatMsg { id: string; user: string; msg: string; ts: number; }
 
 export interface WinnerEvent { name: string; isDraw: boolean; }
+export interface BombEvent { country: string; x: number; y: number; }
+export interface CountryAddedEvent { country: string; }
 
 export interface GameStateSnapshot {
   gameState: GameStateName;
@@ -173,6 +192,9 @@ export class GameEngine extends EventEmitter {
   private leaderboard: Record<string, number> = {};
   private chatMsgs: ChatMsg[] = [];
   private imageCache = new Map<string, Promise<Image | null>>();
+  private bombs: BombData[] = [];
+  private nextBombAt = 0;
+  private bombSerial = 0;
   private globalAngle = 0;
   private renderTimer: ReturnType<typeof setInterval> | null = null;
   private gameLoopTimer: ReturnType<typeof setInterval> | null = null;
@@ -257,6 +279,8 @@ export class GameEngine extends EventEmitter {
         if (this.flags.length === 1) this.endRound(this.flags[0]);
         else this.endRoundDraw();
       }
+
+      if (this.gameState === "PLAYING" && !this.endingRound) this.updateBombs();
     });
 
     Matter.Events.on(this.engine, "collisionStart", (event: any) => {
@@ -310,6 +334,8 @@ export class GameEngine extends EventEmitter {
     this.globalAngle = 0;
     this.gapGrowthRotations = 0;
     this.lastGapRotation = 0;
+    this.bombs = [];
+    this.nextBombAt = 0;
     if (this.isRunning) {
       this.flushQueuedPlayers();
       this.ensureDefaultCountries();
@@ -377,6 +403,67 @@ export class GameEngine extends EventEmitter {
   }
 
   // ── Game loop ──────────────────────────────────────────────────────────────
+  private updateBombs() {
+    const now = Date.now();
+    this.bombs = this.bombs.filter((bomb) => !bomb.exploded || bomb.blastUntil > now);
+
+    if (this.flags.length > 1 && now >= this.nextBombAt) {
+      this.spawnBomb(now);
+      this.scheduleNextBomb(now);
+    }
+
+    this.bombs.forEach((bomb) => {
+      if (!bomb.exploded && now >= bomb.explodesAt) this.explodeBomb(bomb, now);
+    });
+  }
+
+  private scheduleNextBomb(now: number) {
+    this.nextBombAt = now + BOMB_MIN_DELAY_MS + Math.random() * (BOMB_MAX_DELAY_MS - BOMB_MIN_DELAY_MS);
+  }
+
+  private spawnBomb(now: number) {
+    const maxDropRadius = Math.max(60, this.currentRadius - BOMB_RADIUS * 0.45);
+    const angle = Math.random() * Math.PI * 2;
+    const distance = Math.sqrt(Math.random()) * maxDropRadius;
+    this.bombs.push({
+      id: ++this.bombSerial,
+      x: CENTER_X + Math.cos(angle) * distance,
+      y: CENTER_Y + Math.sin(angle) * distance,
+      plantedAt: now,
+      explodesAt: now + BOMB_ARM_MS,
+      blastUntil: 0,
+      exploded: false,
+    });
+  }
+
+  private explodeBomb(bomb: BombData, now: number) {
+    bomb.exploded = true;
+    bomb.blastUntil = now + BOMB_BLAST_MS;
+
+    const target = this.findBombTarget(bomb);
+    if (!target) {
+      this.emit("bombExploded", { country: "", x: bomb.x, y: bomb.y } satisfies BombEvent);
+      return;
+    }
+
+    bomb.eliminated = target.name;
+    Matter.World.remove(this.engine.world, target.body);
+    this.flags = this.flags.filter((flag) => flag.id !== target.id);
+    this.emit("bombExploded", { country: target.name, x: bomb.x, y: bomb.y } satisfies BombEvent);
+    this.addChatMessage(target.name, "eliminated by bomb");
+  }
+
+  private findBombTarget(bomb: BombData): FlagData | null {
+    if (this.flags.length <= 1) return null;
+    const targets = this.flags
+      .map((flag) => ({
+        flag,
+        distance: Math.hypot(flag.body.position.x - bomb.x, flag.body.position.y - bomb.y),
+      }))
+      .sort((a, b) => a.distance - b.distance);
+    return targets.find((target) => target.distance <= BOMB_RADIUS)?.flag || targets[0]?.flag || null;
+  }
+
   private startGameLoop() {
     if (this.gameLoopTimer) return;
     this.ensureDefaultCountries();
@@ -392,6 +479,8 @@ export class GameEngine extends EventEmitter {
           this.countdown = 0; 
           this.gapGrowthRotations = 0;
           this.lastGapRotation = Math.floor(this.globalAngle / (Math.PI * 2));
+          this.scheduleNextBomb(Date.now());
+          this.emit("roundStart");
           // Boost initial speed
           this.flags.forEach(f => {
             Matter.Body.setVelocity(f.body, this.randomVelocity(FLAG_SPEED * 1.8));
@@ -495,6 +584,8 @@ export class GameEngine extends EventEmitter {
     });
 
     // ── Floating Chat Spawns (Top of Circle) ──
+    this.renderBombs(ctx);
+
     const latestChats = [...this.chatMsgs].reverse().slice(0, 3);
     latestChats.forEach((m, i) => {
       const age = Date.now() - m.ts;
@@ -512,8 +603,11 @@ export class GameEngine extends EventEmitter {
       
       // User name in white
       const baseY = GAME_Y - 40 - i * 40 - shiftY;
-      ctx.fillStyle = "#ffffff";
-      ctx.fillText(`${m.user} joined the arena!`, CENTER_X, baseY);
+      ctx.fillStyle = m.msg.includes("eliminated") ? "#fca5a5" : "#ffffff";
+      const eventText = m.msg.includes("eliminated")
+        ? `${m.user} eliminated by bomb!`
+        : `${m.user} added to the arena!`;
+      ctx.fillText(eventText, CENTER_X, baseY);
       ctx.restore();
     });
 
@@ -528,20 +622,29 @@ export class GameEngine extends EventEmitter {
     ctx.fillStyle = "#94a3b8";
     ctx.fillText("GLOBAL LEADERBOARD", 280, 35);
     
-    const entries = Object.entries(this.leaderboard).sort(([, a], [, b]) => b - a).slice(0, 5);
+    const entries = Object.entries(this.leaderboard).sort(([, a], [, b]) => b - a);
     if (entries.length === 0) {
       ctx.fillStyle = "rgba(255,255,255,0.55)";
       ctx.font = "bold 22px sans-serif";
       ctx.fillText("NO WINNERS YET", 280, 135);
     }
-    entries.forEach(([country, wins], i) => {
-      const y = 78 + i * 34;
-      const name = this.truncateName(country, 18).toUpperCase();
-      ctx.fillStyle = i === 0 ? "#FF3D68" : "#ffffff";
-      ctx.font = "bold 24px sans-serif";
+    const visibleCount = Math.min(3, entries.length);
+    const carouselStart = entries.length > visibleCount ? Math.floor(Date.now() / 2500) % entries.length : 0;
+    for (let i = 0; i < visibleCount; i++) {
+      const entryIndex = (carouselStart + i) % entries.length;
+      const [country, wins] = entries[entryIndex];
+      const y = 92 + i * 50;
+      const name = this.truncateName(country, 16).toUpperCase();
+      ctx.fillStyle = entryIndex === 0 ? "#FF3D68" : "#ffffff";
+      ctx.font = "bold 28px sans-serif";
       ctx.textAlign = "center";
-      ctx.fillText(`#${i + 1}  ${name}  ${wins}W`, 280, y);
-    });
+      ctx.fillText(`#${entryIndex + 1}  ${this.getCountryEmoji(country)}  ${name}  ${wins}W`, 280, y);
+    }
+    if (entries.length > visibleCount) {
+      ctx.fillStyle = "rgba(255,255,255,0.45)";
+      ctx.font = "bold 18px sans-serif";
+      ctx.fillText(`${carouselStart + 1}/${entries.length}`, 280, 230);
+    }
     ctx.restore();
 
     // ── Instruction Text (Below Leaderboard) ──
@@ -614,6 +717,57 @@ export class GameEngine extends EventEmitter {
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
+  private renderBombs(ctx: SKRSContext2D) {
+    const now = Date.now();
+    this.bombs.forEach((bomb) => {
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      if (bomb.exploded) {
+        const progress = Math.min(1, Math.max(0, 1 - (bomb.blastUntil - now) / BOMB_BLAST_MS));
+        const radius = 35 + progress * BOMB_RADIUS;
+        const alpha = Math.max(0, 1 - progress);
+        const blast = ctx.createRadialGradient(bomb.x, bomb.y, 4, bomb.x, bomb.y, radius);
+        blast.addColorStop(0, `rgba(255,255,255,${0.92 * alpha})`);
+        blast.addColorStop(0.35, `rgba(255,61,104,${0.78 * alpha})`);
+        blast.addColorStop(1, `rgba(245,158,11,0)`);
+        ctx.fillStyle = blast;
+        ctx.beginPath();
+        ctx.arc(bomb.x, bomb.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+        ctx.font = "bold 28px sans-serif";
+        ctx.fillText("BOOM", bomb.x, bomb.y);
+      } else {
+        const armedProgress = Math.min(1, (now - bomb.plantedAt) / BOMB_ARM_MS);
+        const pulse = 1 + Math.sin(now / 120) * 0.12;
+        ctx.shadowBlur = 18;
+        ctx.shadowColor = "rgba(255, 61, 104, 0.8)";
+        ctx.fillStyle = "#050505";
+        ctx.beginPath();
+        ctx.arc(bomb.x, bomb.y, BOMB_VISUAL_RADIUS * pulse, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = "#f97316";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(bomb.x, bomb.y, BOMB_RADIUS * armedProgress, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = "#ef4444";
+        ctx.beginPath();
+        ctx.arc(bomb.x + 15, bomb.y - 17, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 11px sans-serif";
+        ctx.fillText("BOMB", bomb.x, bomb.y + 1);
+      }
+
+      ctx.textBaseline = "alphabetic";
+      ctx.restore();
+    });
+  }
+
   start() {
     if (this.isRunning) return;
     this.isRunning = true;
@@ -683,7 +837,10 @@ export class GameEngine extends EventEmitter {
   spawnCountryFromText(text: string): string | null {
     const country = this.findCountryInText(text);
     if (!country) return null;
-    return this.spawnCountry(country) ? formatCountryName(country) : null;
+    const displayName = formatCountryName(country);
+    if (!this.spawnCountry(country)) return null;
+    this.emit("countryAdded", { country: displayName } satisfies CountryAddedEvent);
+    return displayName;
   }
 
   private spawnCountry(countryName: string): boolean {
@@ -768,6 +925,11 @@ export class GameEngine extends EventEmitter {
     return initials || "?";
   }
 
+  private getCountryEmoji(displayName: string) {
+    const country = this.findCountryInText(displayName);
+    return country ? COUNTRIES[country].emoji : "";
+  }
+
   addChatMessage(user: string, msg: string) {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     this.chatMsgs = [{ id, user, msg, ts: Date.now() }, ...this.chatMsgs].slice(0, 10);
@@ -842,11 +1004,14 @@ export class GameEngine extends EventEmitter {
     this.currentRadius = RADIUS;
     this.gapGrowthRotations = 0;
     this.lastGapRotation = 0;
+    this.bombs = [];
+    this.nextBombAt = 0;
   }
 
   private removeAllFlags() {
     this.flags.forEach((f) => Matter.World.remove(this.engine.world, f.body));
     this.flags = [];
+    this.bombs = [];
   }
 
   private renderStillFrame() {

@@ -8,7 +8,7 @@ import { Writable } from "stream";
 import ffmpegStatic from "ffmpeg-static";
 import path from "path";
 import { GameEngine } from "./game-engine.js";
-import type { WinnerEvent } from "./game-engine.js";
+import type { BombEvent, CountryAddedEvent, WinnerEvent } from "./game-engine.js";
 
 const ffmpegPath = ffmpegStatic as string;
 const DEFAULT_YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY?.trim() || "";
@@ -41,11 +41,20 @@ function generateBeep(freq = 440, durationMs = 90, amplitude = 0.38): Buffer {
 }
 
 const BEEP_BUF = generateBeep(440, 90);
+const COUNTRY_ADD_BUF = Buffer.concat([
+  generateBeep(880, 80, 0.22),
+  generateSilence(35),
+  generateBeep(1175, 110, 0.24),
+]);
+const ROUND_START_BUF = generateSweep(260, 920, 520, 0.28);
+const EXPLOSION_BUF = generateExplosionEffect();
 
 // Pending PCM audio buffers to mix into the next chunks
 let pendingAudioBuffers: Buffer[] = [];
 let pendingAudioOffset = 0;
 let audioLoopTimer: ReturnType<typeof setInterval> | null = null;
+let joinPromptTimer: ReturnType<typeof setInterval> | null = null;
+let joinPromptPcmPromise: Promise<Buffer> | null = null;
 
 function mixNextChunk(): Buffer {
   if (pendingAudioBuffers.length === 0) return SILENCE_CHUNK;
@@ -69,6 +78,44 @@ function mixNextChunk(): Buffer {
 function generateSilence(durationMs: number): Buffer {
   const frames = Math.floor(SAMPLE_RATE * durationMs / 1000);
   return Buffer.alloc(frames * AUDIO_CHANNELS * BYTES_PER_SAMPLE, 0);
+}
+
+function generateSweep(startFreq: number, endFreq: number, durationMs: number, amplitude = 0.28): Buffer {
+  const numFrames = Math.floor(SAMPLE_RATE * durationMs / 1000);
+  const buf = Buffer.alloc(numFrames * AUDIO_CHANNELS * BYTES_PER_SAMPLE);
+  let phase = 0;
+  for (let i = 0; i < numFrames; i++) {
+    const t = i / Math.max(1, numFrames - 1);
+    const freq = startFreq + (endFreq - startFreq) * t;
+    const env = Math.sin(Math.PI * t);
+    phase += (2 * Math.PI * freq) / SAMPLE_RATE;
+    const s = Math.max(-32768, Math.min(32767, Math.floor(amplitude * env * 32767 * Math.sin(phase))));
+    const pos = i * AUDIO_CHANNELS * BYTES_PER_SAMPLE;
+    buf.writeInt16LE(s, pos);
+    buf.writeInt16LE(s, pos + 2);
+  }
+  return buf;
+}
+
+function generateExplosionEffect(): Buffer {
+  const durationMs = 720;
+  const numFrames = Math.floor(SAMPLE_RATE * durationMs / 1000);
+  const buf = Buffer.alloc(numFrames * AUDIO_CHANNELS * BYTES_PER_SAMPLE);
+  let phase = 0;
+  for (let i = 0; i < numFrames; i++) {
+    const t = i / Math.max(1, numFrames - 1);
+    const decay = (1 - t) ** 2.2;
+    const thumpFreq = 95 - 45 * t;
+    phase += (2 * Math.PI * thumpFreq) / SAMPLE_RATE;
+    const noise = (Math.random() * 2 - 1) * 0.42 * decay;
+    const thump = Math.sin(phase) * 0.58 * decay;
+    const crack = t < 0.08 ? (Math.random() * 2 - 1) * 0.5 * (1 - t / 0.08) : 0;
+    const s = Math.max(-32768, Math.min(32767, Math.floor((noise + thump + crack) * 32767)));
+    const pos = i * AUDIO_CHANNELS * BYTES_PER_SAMPLE;
+    buf.writeInt16LE(s, pos);
+    buf.writeInt16LE(s, pos + 2);
+  }
+  return buf;
 }
 
 function generateFanfare(): Buffer {
@@ -133,8 +180,24 @@ async function createWinnerAnnouncementPcm(winner: WinnerEvent): Promise<Buffer>
   }
 }
 
+function getJoinPromptPcm(): Promise<Buffer> {
+  joinPromptPcmPromise ||= synthesizeSpeechPcm("Type your country name in chat to join the arena")
+    .then((speech) => Buffer.concat([generateBeep(740, 90, 0.18), generateSilence(60), speech]))
+    .catch((err) => {
+      console.error("Join prompt TTS failed, using chime only:", err);
+      return Buffer.concat([generateBeep(740, 110, 0.22), generateSilence(80), generateBeep(988, 160, 0.24)]);
+    });
+  return joinPromptPcmPromise;
+}
+
 function queueAudio(buffer: Buffer) {
   pendingAudioBuffers.push(buffer);
+}
+
+function queueJoinPrompt(proc: ChildProcess) {
+  getJoinPromptPcm().then((pcm) => {
+    if (ffmpegProc === proc) queueAudio(Buffer.from(pcm));
+  }).catch((err) => console.error("Join prompt queue error:", err));
 }
 
 // ─── Singleton game engine ────────────────────────────────────────────────────
@@ -273,10 +336,32 @@ function cleanupFfmpegProcess(proc: ChildProcess) {
     (proc as any)._onWinner = null;
   }
 
+  const onBombExploded = (proc as any)._onBombExploded;
+  if (onBombExploded) {
+    gameEngine.off("bombExploded", onBombExploded);
+    (proc as any)._onBombExploded = null;
+  }
+
+  const onCountryAdded = (proc as any)._onCountryAdded;
+  if (onCountryAdded) {
+    gameEngine.off("countryAdded", onCountryAdded);
+    (proc as any)._onCountryAdded = null;
+  }
+
+  const onRoundStart = (proc as any)._onRoundStart;
+  if (onRoundStart) {
+    gameEngine.off("roundStart", onRoundStart);
+    (proc as any)._onRoundStart = null;
+  }
+
   if (ffmpegProc === proc) {
     if (audioLoopTimer) {
       clearInterval(audioLoopTimer);
       audioLoopTimer = null;
+    }
+    if (joinPromptTimer) {
+      clearInterval(joinPromptTimer);
+      joinPromptTimer = null;
     }
     pendingAudioBuffers = [];
     pendingAudioOffset = 0;
@@ -422,6 +507,28 @@ async function startStream(rtmpUrl: string) {
   };
   gameEngine.on("winner", onWinner);
   (proc as any)._onWinner = onWinner;
+
+  const onBombExploded = (event: BombEvent) => {
+    const eliminatedChime = event.country ? generateBeep(180, 180, 0.26) : generateSilence(1);
+    queueAudio(Buffer.concat([Buffer.from(EXPLOSION_BUF), generateSilence(50), eliminatedChime]));
+  };
+  gameEngine.on("bombExploded", onBombExploded);
+  (proc as any)._onBombExploded = onBombExploded;
+
+  const onCountryAdded = (_event: CountryAddedEvent) => {
+    queueAudio(Buffer.from(COUNTRY_ADD_BUF));
+  };
+  gameEngine.on("countryAdded", onCountryAdded);
+  (proc as any)._onCountryAdded = onCountryAdded;
+
+  const onRoundStart = () => {
+    queueAudio(Buffer.from(ROUND_START_BUF));
+  };
+  gameEngine.on("roundStart", onRoundStart);
+  (proc as any)._onRoundStart = onRoundStart;
+
+  getJoinPromptPcm().catch(() => {});
+  joinPromptTimer = setInterval(() => queueJoinPrompt(proc), 15000);
 
   gameEngine.start();
 }
