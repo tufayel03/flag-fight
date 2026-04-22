@@ -37,8 +37,6 @@ const BOMB_VISUAL_RADIUS = 22;
 const SUDDEN_DEATH_COUNT = 10;
 const FINAL_BOMB_MIN_DELAY_MS = 3600;
 const FINAL_BOMB_MAX_DELAY_MS = 5400;
-const HYPE_BANNER_MS = 2200;
-const MILESTONE_COUNTS = [25, 10, 5, 3, 2];
 
 // ─── Country map ──────────────────────────────────────────────────────────────
 export const COUNTRIES: Record<string, { code: string; emoji: string }> = {
@@ -201,9 +199,6 @@ export class GameEngine extends EventEmitter {
   private bombs: BombData[] = [];
   private nextBombAt = 0;
   private bombSerial = 0;
-  private roundNumber = 0;
-  private lastMilestoneCount = DEFAULT_COUNTRY_COUNT;
-  private hypeBanner: { text: string; subtext: string; color: string; until: number } | null = null;
   private globalAngle = 0;
   private renderTimer: ReturnType<typeof setInterval> | null = null;
   private gameLoopTimer: ReturnType<typeof setInterval> | null = null;
@@ -283,8 +278,6 @@ export class GameEngine extends EventEmitter {
         }
       }
 
-      if (this.gameState === "PLAYING" && !this.endingRound) this.updateMilestones();
-
       if (this.gameState === "PLAYING" && !this.endingRound && this.flags.length <= 1) {
         this.endingRound = true;
         if (this.flags.length === 1) this.endRound(this.flags[0]);
@@ -347,8 +340,6 @@ export class GameEngine extends EventEmitter {
     this.lastGapRotation = 0;
     this.bombs = [];
     this.nextBombAt = 0;
-    this.lastMilestoneCount = DEFAULT_COUNTRY_COUNT;
-    this.hypeBanner = null;
     if (this.isRunning) {
       this.flushQueuedPlayers();
       this.ensureDefaultCountries();
@@ -480,30 +471,6 @@ export class GameEngine extends EventEmitter {
     return targets.find((target) => target.distance <= BOMB_RADIUS)?.flag || targets[0]?.flag || null;
   }
 
-  private updateMilestones() {
-    if (this.flags.length <= 1) return;
-    const crossed = MILESTONE_COUNTS
-      .filter((count) => this.flags.length <= count && this.lastMilestoneCount > count)
-      .pop();
-    if (!crossed) return;
-
-    this.lastMilestoneCount = crossed;
-    const messages: Record<number, { text: string; subtext: string; color: string }> = {
-      25: { text: "HALF THE FIELD IS GONE", subtext: "The arena is getting dangerous.", color: "#f97316" },
-      10: { text: "FINAL 10", subtext: "Bombs are dropping faster now.", color: "#ef4444" },
-      5: { text: "TOP 5", subtext: "One clean escape can change everything.", color: "#FF3D68" },
-      3: { text: "FINAL 3", subtext: "Every bounce matters.", color: "#facc15" },
-      2: { text: "HEAD TO HEAD", subtext: "One country becomes champion.", color: "#ffffff" },
-    };
-    const message = messages[crossed];
-    this.setHypeBanner(message.text, message.subtext, message.color);
-    if (crossed === SUDDEN_DEATH_COUNT) this.scheduleNextBomb(Date.now());
-  }
-
-  private setHypeBanner(text: string, subtext: string, color = "#ffffff", durationMs = HYPE_BANNER_MS) {
-    this.hypeBanner = { text, subtext, color, until: Date.now() + durationMs };
-  }
-
   private startGameLoop() {
     if (this.gameLoopTimer) return;
     this.ensureDefaultCountries();
@@ -519,10 +486,7 @@ export class GameEngine extends EventEmitter {
           this.countdown = 0; 
           this.gapGrowthRotations = 0;
           this.lastGapRotation = Math.floor(this.globalAngle / (Math.PI * 2));
-          this.roundNumber++;
-          this.lastMilestoneCount = this.flags.length;
           this.scheduleNextBomb(Date.now());
-          this.setHypeBanner(`ROUND ${this.roundNumber}`, "50 countries. Last flag wins.", "#60a5fa", 1800);
           this.emit("roundStart");
           // Boost initial speed
           this.flags.forEach(f => {
@@ -722,18 +686,13 @@ export class GameEngine extends EventEmitter {
     ctx.font = "bold 20px sans-serif";
     ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
     ctx.textAlign = "center";
-    ctx.fillText("50 RANDOM COUNTRIES FIGHT EVERY ROUND!", CENTER_X, 350);
     
     // ── Instruction Text (Above Arena) ──
     ctx.font = "bold 24px sans-serif";
     ctx.fillStyle = "#60a5fa";
-    ctx.fillText("TYPE A COUNTRY NAME TO ADD IT!", CENTER_X, CENTER_Y - this.currentRadius - 40);
     ctx.restore();
 
     // ── Overlays ──
-    this.renderRoundHud(ctx);
-    this.renderHypeBanner(ctx);
-
     if (this.gameState === "COUNTDOWN") {
       ctx.fillStyle = "rgba(0,0,0,0.3)";
       ctx.fillRect(0, 0, STREAM_W, STREAM_H);
@@ -742,8 +701,6 @@ export class GameEngine extends EventEmitter {
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(String(this.countdown), CENTER_X, CENTER_Y);
-      ctx.font = "bold 30px sans-serif";
-      ctx.fillText("STARTING...", CENTER_X, CENTER_Y + 150);
       ctx.textBaseline = "alphabetic";
     }
 
@@ -781,65 +738,9 @@ export class GameEngine extends EventEmitter {
       ctx.restore();
     }
 
-    if (this.gameState === "WAITING") {
-      ctx.textAlign = "center";
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 30px sans-serif";
-      ctx.fillText("TYPE A COUNTRY NAME IN CHAT!", CENTER_X, CENTER_Y + RADIUS + 80);
-    }
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
-  private renderRoundHud(ctx: SKRSContext2D) {
-    if (this.gameState !== "PLAYING" && this.gameState !== "COUNTDOWN") return;
-
-    const panelY = Math.min(STREAM_H - 105, CENTER_Y + this.currentRadius + 45);
-    const finalPhase = this.gameState === "PLAYING" && this.flags.length <= SUDDEN_DEATH_COUNT;
-    const armedBomb = this.bombs.some((bomb) => !bomb.exploded);
-    const nextBombSeconds = Math.max(0, Math.ceil((this.nextBombAt - Date.now()) / 1000));
-    const bombText = armedBomb ? "BOMB ARMED" : `NEXT BOMB ${nextBombSeconds}s`;
-    const statusText = this.gameState === "COUNTDOWN"
-      ? `ROUND ${Math.max(1, this.roundNumber + 1)} STARTING`
-      : `ROUND ${this.roundNumber}  |  ${this.flags.length} SURVIVORS  |  ${bombText}`;
-
-    ctx.save();
-    ctx.fillStyle = finalPhase ? "rgba(127, 29, 29, 0.78)" : "rgba(15, 23, 42, 0.78)";
-    ctx.strokeStyle = finalPhase ? "rgba(239, 68, 68, 0.95)" : "rgba(96, 165, 250, 0.55)";
-    ctx.lineWidth = 2;
-    ctx.roundRect(70, panelY, 580, 48, 8);
-    ctx.fill();
-    ctx.stroke();
-    ctx.textAlign = "center";
-    ctx.fillStyle = finalPhase ? "#fee2e2" : "#ffffff";
-    ctx.font = "bold 24px sans-serif";
-    ctx.fillText(statusText, CENTER_X, panelY + 31);
-    ctx.restore();
-  }
-
-  private renderHypeBanner(ctx: SKRSContext2D) {
-    if (!this.hypeBanner) return;
-    const now = Date.now();
-    if (this.hypeBanner.until <= now) {
-      this.hypeBanner = null;
-      return;
-    }
-
-    const remaining = this.hypeBanner.until - now;
-    const alpha = Math.min(1, remaining / 300);
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = "rgba(0,0,0,0.68)";
-    ctx.fillRect(0, CENTER_Y - 190, STREAM_W, 112);
-    ctx.textAlign = "center";
-    ctx.fillStyle = this.hypeBanner.color;
-    ctx.font = "bold 46px sans-serif";
-    ctx.fillText(this.hypeBanner.text, CENTER_X, CENTER_Y - 145);
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 22px sans-serif";
-    ctx.fillText(this.hypeBanner.subtext, CENTER_X, CENTER_Y - 108);
-    ctx.restore();
-  }
-
   private drawCrown(ctx: SKRSContext2D, x: number, y: number) {
     ctx.save();
     ctx.translate(x, y);
@@ -1175,9 +1076,6 @@ export class GameEngine extends EventEmitter {
     this.lastGapRotation = 0;
     this.bombs = [];
     this.nextBombAt = 0;
-    this.roundNumber = 0;
-    this.lastMilestoneCount = DEFAULT_COUNTRY_COUNT;
-    this.hypeBanner = null;
   }
 
   private removeAllFlags() {
