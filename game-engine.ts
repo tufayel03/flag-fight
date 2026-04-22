@@ -14,23 +14,20 @@ const CENTER_Y = GAME_Y + GAME_SIZE / 2;
 const RADIUS = 320;
 const TOTAL_SEGMENTS = 60;
 const GAP_SEGMENTS = 8;
-const FLAG_SPEED = 12;
-const FLAG_FORCE = 0.0028;
-const FLAG_MAX_SPEED = 12;
-const SPEED_LIMIT_PER_ROTATION = 1.5;
-const MAX_SPEED_LIMIT = 28;
-const SPEED_BOOST_PER_ROTATION = 1.12;
+const FLAG_RADIUS = 27;
+const DEFAULT_COUNTRY_COUNT = 50;
+const FLAG_SPEED = 15;
+const FLAG_FORCE = 0.0036;
+const FLAG_MAX_SPEED = 15;
+const SPEED_LIMIT_PER_ROTATION = 2;
+const MAX_SPEED_LIMIT = 36;
+const SPEED_BOOST_PER_ROTATION = 1.15;
 const FPS = 30;
 const MIN_PLAYERS = 2;
-const PLAYER_RING_SPACING = 96;
+const PLAYER_RING_SPACING = 40;
 const RADIUS_GROWTH_STEP = 20;
-const MAX_RADIUS = 430;
+const MAX_RADIUS = 340;
 const GAP_SEGMENTS_PER_ROTATION = 2;
-const BOT_PLAYER: PlayerInput = {
-  id: "bot:bot",
-  name: "Bot",
-  isBot: true,
-};
 
 // ─── Country map ──────────────────────────────────────────────────────────────
 export const COUNTRIES: Record<string, { code: string; emoji: string }> = {
@@ -102,11 +99,37 @@ export const COUNTRIES: Record<string, { code: string; emoji: string }> = {
 };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+const COUNTRY_NAMES = Object.keys(COUNTRIES);
+const UNIQUE_COUNTRY_NAMES = COUNTRY_NAMES.filter((name, index, list) =>
+  list.findIndex((candidate) => COUNTRIES[candidate].code === COUNTRIES[name].code) === index
+);
+const COUNTRY_ALIASES = COUNTRY_NAMES.map((name) => ({ name, normalized: normalizeCountryText(name) }));
+
+function normalizeCountryText(text: string) {
+  return text
+    .toLowerCase()
+    .replace(/-/g, " ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatCountryName(name: string) {
+  if (["usa", "uk", "uae"].includes(name)) return name.toUpperCase();
+  return name.replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+}
+
+function getFlagImageUrl(code: string) {
+  return `https://flagcdn.com/w160/${code.toLowerCase()}.png`;
+}
+
 export interface PlayerInput {
   id?: string;
   name: string;
   avatarUrl?: string | null;
   isBot?: boolean;
+  countryCode?: string;
+  emoji?: string;
 }
 
 interface FlagData {
@@ -114,6 +137,8 @@ interface FlagData {
   body: Matter.Body;
   playerId: string;
   name: string;
+  countryCode: string | null;
+  emoji: string;
   avatarUrl: string | null;
   isBot: boolean;
   img: Image | null;
@@ -124,7 +149,6 @@ export type GameStateName = "WAITING" | "COUNTDOWN" | "PLAYING" | "ENDED";
 export interface ChatMsg { id: string; user: string; msg: string; ts: number; }
 
 export interface WinnerEvent { name: string; isDraw: boolean; }
-export interface PlayerJoinedEvent { name: string; }
 
 export interface GameStateSnapshot {
   gameState: GameStateName;
@@ -132,7 +156,7 @@ export interface GameStateSnapshot {
   flagCount: number;
   leaderboard: Record<string, number>;
   chatMessages: ChatMsg[];
-  winner: { country: string; emoji: string } | null;
+  winner: { country: string; emoji: string; code?: string } | null;
 }
 
 // ─── GameEngine ───────────────────────────────────────────────────────────────
@@ -145,9 +169,10 @@ export class GameEngine extends EventEmitter {
   private queuedPlayers: PlayerInput[] = [];
   private gameState: GameStateName = "WAITING";
   private countdown = 3;
-  private winner: { country: string; emoji: string } | null = null;
+  private winner: { country: string; emoji: string; code?: string } | null = null;
   private leaderboard: Record<string, number> = {};
   private chatMsgs: ChatMsg[] = [];
+  private imageCache = new Map<string, Promise<Image | null>>();
   private globalAngle = 0;
   private renderTimer: ReturnType<typeof setInterval> | null = null;
   private gameLoopTimer: ReturnType<typeof setInterval> | null = null;
@@ -217,7 +242,7 @@ export class GameEngine extends EventEmitter {
         }
         const dx = f.body.position.x - CENTER_X;
         const dy = f.body.position.y - CENTER_Y;
-        if (Math.sqrt(dx * dx + dy * dy) > this.currentRadius + 50) {
+        if (Math.sqrt(dx * dx + dy * dy) > this.currentRadius + FLAG_RADIUS + 10) {
           if (this.gameState === "PLAYING" || this.gameState === "ENDED") {
             Matter.World.remove(this.engine.world, f.body);
             this.flags.splice(i, 1);
@@ -258,7 +283,11 @@ export class GameEngine extends EventEmitter {
 
   private endRound(flag: FlagData) {
     this.gameState = "ENDED";
-    this.winner = { country: flag.name, emoji: "" };
+    this.winner = {
+      country: flag.name,
+      emoji: flag.emoji,
+      ...(flag.countryCode ? { code: flag.countryCode } : {}),
+    };
     if (!flag.isBot) this.leaderboard[flag.name] = (this.leaderboard[flag.name] || 0) + 1;
     this.emit("winner", { name: flag.name, isDraw: false } satisfies WinnerEvent);
     this.broadcastState();
@@ -282,19 +311,31 @@ export class GameEngine extends EventEmitter {
     this.gapGrowthRotations = 0;
     this.lastGapRotation = 0;
     if (this.isRunning) {
-      this.ensureMinimumPlayers();
       this.flushQueuedPlayers();
+      this.ensureDefaultCountries();
     }
     this.broadcastState();
   }
 
-  private ensureMinimumPlayers() {
-    if (!this.flags.some((f) => f.isBot)) this.spawnPlayer(BOT_PLAYER);
+  private ensureDefaultCountries() {
+    if (this.flags.length >= DEFAULT_COUNTRY_COUNT) return;
+    this.addRandomCountries(DEFAULT_COUNTRY_COUNT - this.flags.length);
   }
 
   private flushQueuedPlayers() {
     const queued = this.queuedPlayers.splice(0);
     queued.forEach((player) => this.spawnPlayer(player));
+  }
+
+  private addRandomCountries(count: number) {
+    const activeIds = new Set(this.flags.map((flag) => flag.playerId));
+    const available = UNIQUE_COUNTRY_NAMES.filter((name) => {
+      const code = COUNTRIES[name].code;
+      return !activeIds.has(`country:${code}`);
+    });
+    for (const name of this.shuffle(available).slice(0, count)) {
+      this.spawnCountry(name);
+    }
   }
 
   private getGapSegments() {
@@ -324,10 +365,7 @@ export class GameEngine extends EventEmitter {
         const nextSpeed = Math.min(speedLimit, Math.max(FLAG_SPEED, speed * boost));
         Matter.Body.setVelocity(flag.body, Matter.Vector.mult(Matter.Vector.normalise(velocity), nextSpeed));
       } else {
-        Matter.Body.setVelocity(flag.body, {
-          x: (Math.random() - 0.5) * FLAG_SPEED,
-          y: (Math.random() - 0.5) * FLAG_SPEED,
-        });
+        Matter.Body.setVelocity(flag.body, this.randomVelocity(FLAG_SPEED));
       }
     });
   }
@@ -341,7 +379,7 @@ export class GameEngine extends EventEmitter {
   // ── Game loop ──────────────────────────────────────────────────────────────
   private startGameLoop() {
     if (this.gameLoopTimer) return;
-    this.ensureMinimumPlayers();
+    this.ensureDefaultCountries();
     this.gameLoopTimer = setInterval(() => {
       if (this.gameState === "WAITING" && this.flags.length >= MIN_PLAYERS) {
         this.gameState = "COUNTDOWN";
@@ -356,10 +394,7 @@ export class GameEngine extends EventEmitter {
           this.lastGapRotation = Math.floor(this.globalAngle / (Math.PI * 2));
           // Boost initial speed
           this.flags.forEach(f => {
-            Matter.Body.setVelocity(f.body, {
-              x: (Math.random() - 0.5) * FLAG_SPEED * 1.5,
-              y: (Math.random() - 0.5) * FLAG_SPEED * 1.5
-            });
+            Matter.Body.setVelocity(f.body, this.randomVelocity(FLAG_SPEED * 1.8));
           });
         }
         this.broadcastState();
@@ -424,19 +459,19 @@ export class GameEngine extends EventEmitter {
       ctx.shadowColor = "#FF3D68";
       
       ctx.beginPath();
-      ctx.arc(0, 0, 45, 0, Math.PI * 2);
+      ctx.arc(0, 0, FLAG_RADIUS, 0, Math.PI * 2);
       ctx.clip();
       
       if (flag.img) {
-        ctx.drawImage(flag.img, -45, -45, 90, 90);
+        ctx.drawImage(flag.img, -FLAG_RADIUS, -FLAG_RADIUS, FLAG_RADIUS * 2, FLAG_RADIUS * 2);
       } else {
-        ctx.fillStyle = flag.isBot ? "#2563EB" : "#334155";
-        ctx.fillRect(-45, -45, 90, 90);
+        ctx.fillStyle = "#334155";
+        ctx.fillRect(-FLAG_RADIUS, -FLAG_RADIUS, FLAG_RADIUS * 2, FLAG_RADIUS * 2);
         ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 28px sans-serif";
+        ctx.font = "bold 18px sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText(this.getInitials(flag.name), 0, 2);
+        ctx.fillText(flag.emoji || this.getInitials(flag.name), 0, 2);
         ctx.textBaseline = "alphabetic";
       }
       ctx.restore();
@@ -445,17 +480,17 @@ export class GameEngine extends EventEmitter {
       ctx.save();
       ctx.translate(flag.body.position.x, flag.body.position.y);
       ctx.beginPath();
-      ctx.arc(0, 0, 45, 0, Math.PI * 2);
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = flag.isBot ? "#60a5fa" : "#FF3D68";
+      ctx.arc(0, 0, FLAG_RADIUS, 0, Math.PI * 2);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "#FF3D68";
       ctx.stroke();
-      ctx.font = "bold 17px sans-serif";
+      ctx.font = "bold 12px sans-serif";
       ctx.textAlign = "center";
-      ctx.lineWidth = 5;
+      ctx.lineWidth = 4;
       ctx.strokeStyle = "rgba(0,0,0,0.75)";
-      ctx.strokeText(this.truncateName(flag.name, 15), 0, 68);
+      ctx.strokeText(this.truncateName(flag.name, 12), 0, FLAG_RADIUS + 18);
       ctx.fillStyle = "#ffffff";
-      ctx.fillText(this.truncateName(flag.name, 15), 0, 68);
+      ctx.fillText(this.truncateName(flag.name, 12), 0, FLAG_RADIUS + 18);
       ctx.restore();
     });
 
@@ -514,12 +549,12 @@ export class GameEngine extends EventEmitter {
     ctx.font = "bold 20px sans-serif";
     ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
     ctx.textAlign = "center";
-    ctx.fillText("COMMENT TO JOIN THE ARENA!", CENTER_X, 350);
+    ctx.fillText("50 RANDOM COUNTRIES FIGHT EVERY ROUND!", CENTER_X, 350);
     
     // ── Instruction Text (Above Arena) ──
     ctx.font = "bold 24px sans-serif";
     ctx.fillStyle = "#60a5fa";
-    ctx.fillText("TYPE ANY CHAT MESSAGE!", CENTER_X, CENTER_Y - this.currentRadius - 40);
+    ctx.fillText("TYPE A COUNTRY NAME TO ADD IT!", CENTER_X, CENTER_Y - this.currentRadius - 40);
     ctx.restore();
 
     // ── Overlays ──
@@ -539,14 +574,34 @@ export class GameEngine extends EventEmitter {
     if (this.gameState === "ENDED" && this.winner) {
       ctx.save();
       ctx.fillStyle = "rgba(0,0,0,0.7)";
-      ctx.fillRect(0, CENTER_Y - 120, STREAM_W, 240);
+      ctx.fillRect(0, CENTER_Y - 210, STREAM_W, 420);
       ctx.textAlign = "center";
       ctx.fillStyle = "#FF3D68";
       ctx.font = "bold 34px sans-serif";
-      ctx.fillText("ROUND WINNER", CENTER_X, CENTER_Y - 40);
+      ctx.fillText("ROUND WINNER", CENTER_X, CENTER_Y - 165);
+      const winnerFlag = this.flags.find((flag) => flag.countryCode && flag.countryCode === this.winner?.code);
+      if (winnerFlag?.img) {
+        const flagW = 280;
+        const flagH = 190;
+        const flagX = CENTER_X - flagW / 2;
+        const flagY = CENTER_Y - 120;
+        ctx.save();
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = "rgba(255, 61, 104, 0.45)";
+        ctx.fillStyle = "#ffffff";
+        ctx.roundRect(flagX - 8, flagY - 8, flagW + 16, flagH + 16, 8);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.drawImage(winnerFlag.img, flagX, flagY, flagW, flagH);
+        ctx.restore();
+      } else if (this.winner.emoji) {
+        ctx.font = "bold 130px sans-serif";
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(this.winner.emoji, CENTER_X, CENTER_Y - 15);
+      }
       ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 70px sans-serif";
-      ctx.fillText(this.truncateName(this.winner.country, 18).toUpperCase(), CENTER_X, CENTER_Y + 50);
+      ctx.font = "bold 58px sans-serif";
+      ctx.fillText(this.truncateName(this.winner.country, 18).toUpperCase(), CENTER_X, CENTER_Y + 145);
       ctx.restore();
     }
 
@@ -554,7 +609,7 @@ export class GameEngine extends EventEmitter {
       ctx.textAlign = "center";
       ctx.fillStyle = "#ffffff";
       ctx.font = "bold 30px sans-serif";
-      ctx.fillText("COMMENT IN CHAT TO PLAY!", CENTER_X, CENTER_Y + RADIUS + 80);
+      ctx.fillText("TYPE A COUNTRY NAME IN CHAT!", CENTER_X, CENTER_Y + RADIUS + 80);
     }
   }
 
@@ -563,7 +618,7 @@ export class GameEngine extends EventEmitter {
     if (this.isRunning) return;
     this.isRunning = true;
     this.clearRoundResetTimer();
-    this.ensureMinimumPlayers();
+    this.ensureDefaultCountries();
     this.startPhysicsLoop();
     this.startGameLoop();
     this.startRenderLoop();
@@ -585,17 +640,16 @@ export class GameEngine extends EventEmitter {
     const name = this.cleanPlayerName(player.name);
     if (!name) return false;
     const playerId = this.getPlayerId(player, name);
+    if (this.flags.some((f) => f.playerId === playerId)) return false;
     if (this.gameState === "ENDED") {
       if (this.hasQueuedPlayer(playerId)) return false;
       this.queuedPlayers = [...this.queuedPlayers, { ...player, id: playerId, name }].slice(-100);
       return true;
     }
-    if (this.flags.some((f) => f.playerId === playerId)) return false;
 
-    const x = CENTER_X + (Math.random() - 0.5) * 150;
-    const y = CENTER_Y + (Math.random() - 0.5) * 150;
-    const body = Matter.Bodies.circle(x, y, 45, { restitution: 1.0, friction: 0, frictionAir: 0, density: 0.1 });
-    Matter.Body.setVelocity(body, { x: (Math.random() - 0.5) * FLAG_SPEED, y: (Math.random() - 0.5) * FLAG_SPEED });
+    const { x, y } = this.getSpawnPosition();
+    const body = Matter.Bodies.circle(x, y, FLAG_RADIUS, { restitution: 1.0, friction: 0, frictionAir: 0, density: 0.1 });
+    Matter.Body.setVelocity(body, this.randomVelocity(FLAG_SPEED));
 
     const uniqueEntryId = `${playerId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const avatarUrl = (player.avatarUrl || "").trim() || null;
@@ -604,16 +658,17 @@ export class GameEngine extends EventEmitter {
       body,
       playerId,
       name,
+      countryCode: player.countryCode || null,
+      emoji: player.emoji || "",
       avatarUrl,
       isBot: !!player.isBot,
       img: null,
     };
-    if (avatarUrl) loadImage(avatarUrl).then((img) => { flag.img = img; }).catch(() => {});
+    if (avatarUrl) this.loadCachedImage(avatarUrl).then((img) => { if (img) flag.img = img; });
 
     Matter.World.add(this.engine.world, body);
     this.flags.push(flag);
     this.updateArenaRadiusForCrowd();
-    if (!flag.isBot) this.emit("playerJoined", { name } satisfies PlayerJoinedEvent);
     if (this.flags.length >= MIN_PLAYERS && this.gameState === "WAITING") {
        // logic handled in startGameLoop
     }
@@ -621,7 +676,40 @@ export class GameEngine extends EventEmitter {
   }
 
   spawnFlag(countryName: string): boolean {
-    return this.spawnPlayer({ name: countryName });
+    const country = this.findCountryInText(countryName);
+    return country ? this.spawnCountry(country) : false;
+  }
+
+  spawnCountryFromText(text: string): string | null {
+    const country = this.findCountryInText(text);
+    if (!country) return null;
+    return this.spawnCountry(country) ? formatCountryName(country) : null;
+  }
+
+  private spawnCountry(countryName: string): boolean {
+    const country = COUNTRIES[countryName];
+    if (!country) return false;
+    return this.spawnPlayer({
+      id: `country:${country.code}`,
+      name: formatCountryName(countryName),
+      countryCode: country.code,
+      emoji: country.emoji,
+      avatarUrl: getFlagImageUrl(country.code),
+    });
+  }
+
+  private findCountryInText(text: string): string | null {
+    const normalized = normalizeCountryText(text);
+    if (!normalized) return null;
+
+    const exactAlias = COUNTRY_ALIASES.find((alias) => alias.normalized === normalized);
+    if (exactAlias) return exactAlias.name;
+
+    const padded = ` ${normalized} `;
+    const matches = COUNTRY_ALIASES
+      .filter((alias) => padded.includes(` ${alias.normalized} `))
+      .sort((a, b) => b.normalized.length - a.normalized.length);
+    return matches[0]?.name || null;
   }
 
   private cleanPlayerName(name: string) {
@@ -634,6 +722,40 @@ export class GameEngine extends EventEmitter {
 
   private hasQueuedPlayer(playerId: string) {
     return this.queuedPlayers.some((player) => this.getPlayerId(player, this.cleanPlayerName(player.name)) === playerId);
+  }
+
+  private getSpawnPosition() {
+    const index = this.flags.length;
+    const angle = index * Math.PI * (3 - Math.sqrt(5));
+    const maxSpawnRadius = Math.max(0, this.currentRadius - FLAG_RADIUS - 30);
+    const radius = Math.min(maxSpawnRadius, Math.sqrt(index) * FLAG_RADIUS * 1.8);
+    return {
+      x: CENTER_X + Math.cos(angle) * radius + (Math.random() - 0.5) * 8,
+      y: CENTER_Y + Math.sin(angle) * radius + (Math.random() - 0.5) * 8,
+    };
+  }
+
+  private randomVelocity(speed: number) {
+    const angle = Math.random() * Math.PI * 2;
+    return { x: Math.cos(angle) * speed, y: Math.sin(angle) * speed };
+  }
+
+  private shuffle<T>(items: T[]) {
+    const copy = [...items];
+    for (let i = copy.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy;
+  }
+
+  private loadCachedImage(url: string): Promise<Image | null> {
+    let pending = this.imageCache.get(url);
+    if (!pending) {
+      pending = loadImage(url).catch(() => null);
+      this.imageCache.set(url, pending);
+    }
+    return pending;
   }
 
   private truncateName(name: string, maxLength: number) {

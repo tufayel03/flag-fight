@@ -10,7 +10,7 @@ interface GameState {
   flagCount: number;
   leaderboard: Record<string, number>;
   chatMessages: Array<{ id: string; user: string; msg: string }>;
-  winner: { country: string; emoji: string } | null;
+  winner: { country: string; emoji: string; code?: string } | null;
   isStreaming: boolean;
   currentQuality: string;
 }
@@ -193,7 +193,7 @@ export default function App() {
   const handleSpawn = (e: React.FormEvent) => {
     e.preventDefault();
     if (!game.isStreaming || !spawnInput.trim()) return;
-    send({ type: 'spawnPlayer', name: spawnInput.trim(), user: 'Admin' });
+    send({ type: 'spawnFlag', country: spawnInput.trim(), user: 'Admin' });
     setSpawnInput('');
   };
 
@@ -207,7 +207,7 @@ export default function App() {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
         <div className="bg-white p-8 rounded-xl shadow-lg max-w-md w-full border border-gray-200">
           <div className="text-center mb-8">
-            <h1 className="font-black text-3xl tracking-tighter uppercase text-black mb-2">Bot</h1>
+            <h1 className="font-black text-3xl tracking-tighter uppercase text-black mb-2">Flag Fight</h1>
             <p className="text-gray-500 text-sm font-medium">Streamer Dashboard Login</p>
             <div className={`mt-2 inline-flex items-center gap-2 text-xs font-bold px-3 py-1 rounded-full ${wsConnected ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-500'}`}>
               <span className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-red-400'}`}></span>
@@ -301,7 +301,7 @@ export default function App() {
       {/* Top Header */}
       <header className="h-16 bg-[#1e293b]/80 backdrop-blur-md flex items-center justify-between px-6 border-b border-white/10 shrink-0">
         <div className="flex flex-col">
-          <h1 className="font-black text-xl tracking-tighter uppercase leading-none">Bot</h1>
+          <h1 className="font-black text-xl tracking-tighter uppercase leading-none">Flag Fight</h1>
           <span className="text-[10px] text-blue-400 font-bold tracking-widest uppercase">Admin Panel</span>
         </div>
         
@@ -357,12 +357,12 @@ export default function App() {
           </section>
 
           <section className="flex-1 flex flex-col min-h-0">
-            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4">Recent Players</h3>
+            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4">Recent Countries</h3>
             <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
               {game.chatMessages.slice(0, 10).map(msg => (
                 <div key={msg.id} className="text-xs bg-white/5 p-3 rounded-lg border border-white/5">
                   <span className="text-blue-400 font-bold">{msg.user}</span>
-                  <span className="text-gray-400 mx-1">joined</span>
+                  <span className="text-gray-400 mx-1">added to</span>
                   <span className="text-white font-black uppercase">arena</span>
                 </div>
               ))}
@@ -370,11 +370,11 @@ export default function App() {
           </section>
 
           <form onSubmit={handleSpawn} className="mt-auto">
-            <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-2 block">Manual Player</label>
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-2 block">Manual Country</label>
             <div className="flex gap-2">
               <input type="text" value={spawnInput} onChange={e => setSpawnInput(e.target.value)}
                 disabled={!game.isStreaming}
-                placeholder={game.isStreaming ? "Username..." : "Start stream first"}
+                placeholder={game.isStreaming ? "Country name..." : "Start stream first"}
                 className="flex-1 bg-[#0f172a] border border-white/10 px-4 py-3 rounded-lg text-sm focus:outline-none focus:border-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" />
               <button type="submit" disabled={!game.isStreaming} className="bg-blue-600 p-3 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                 <Send size={18} />

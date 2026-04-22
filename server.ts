@@ -8,7 +8,7 @@ import { Writable } from "stream";
 import ffmpegStatic from "ffmpeg-static";
 import path from "path";
 import { GameEngine } from "./game-engine.js";
-import type { PlayerJoinedEvent, WinnerEvent } from "./game-engine.js";
+import type { WinnerEvent } from "./game-engine.js";
 
 const ffmpegPath = ffmpegStatic as string;
 const DEFAULT_YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY?.trim() || "";
@@ -133,15 +133,6 @@ async function createWinnerAnnouncementPcm(winner: WinnerEvent): Promise<Buffer>
   }
 }
 
-async function createJoinAnnouncementPcm(player: PlayerJoinedEvent): Promise<Buffer | null> {
-  try {
-    return await synthesizeSpeechPcm(`${player.name} has joined`);
-  } catch (err) {
-    console.error("Join TTS failed:", err);
-    return null;
-  }
-}
-
 function queueAudio(buffer: Buffer) {
   pendingAudioBuffers.push(buffer);
 }
@@ -195,7 +186,7 @@ function startYouTubePolling() {
   const pollChat = async () => {
     if (!ytChatId || !ytApiKey) return;
     try {
-      let url = `https://www.googleapis.com/youtube/v3/liveChat/messages?liveChatId=${ytChatId}&part=snippet,authorDetails&key=${ytApiKey}`;
+      let url = `https://www.googleapis.com/youtube/v3/liveChat/messages?liveChatId=${ytChatId}&part=snippet&key=${ytApiKey}`;
       if (ytNextPageToken) url += `&pageToken=${ytNextPageToken}`;
       const res = await fetch(url);
       const data = await res.json();
@@ -203,16 +194,8 @@ function startYouTubePolling() {
       if (data.items?.length > 0) {
         data.items.forEach((item: any) => {
           const snippet = item.snippet || {};
-          const authorDetails = item.authorDetails || {};
-          const author = (authorDetails.displayName || "Viewer").trim();
-          const avatarUrl = authorDetails.profileImageUrl || null;
-          const channelId = authorDetails.channelId || snippet.authorChannelId || author;
-          const spawned = gameEngine.spawnPlayer({
-            id: String(channelId),
-            name: author,
-            avatarUrl,
-          });
-          if (spawned) gameEngine.addChatMessage(author, snippet.displayMessage || "joined");
+          const country = gameEngine.spawnCountryFromText(snippet.displayMessage || "");
+          if (country) gameEngine.addChatMessage(country, "added from chat");
         });
       }
       ytNextPageToken = data.nextPageToken || "";
@@ -288,12 +271,6 @@ function cleanupFfmpegProcess(proc: ChildProcess) {
   if (onWinner) {
     gameEngine.off("winner", onWinner);
     (proc as any)._onWinner = null;
-  }
-
-  const onPlayerJoined = (proc as any)._onPlayerJoined;
-  if (onPlayerJoined) {
-    gameEngine.off("playerJoined", onPlayerJoined);
-    (proc as any)._onPlayerJoined = null;
   }
 
   if (ffmpegProc === proc) {
@@ -446,14 +423,6 @@ async function startStream(rtmpUrl: string) {
   gameEngine.on("winner", onWinner);
   (proc as any)._onWinner = onWinner;
 
-  const onPlayerJoined = (player: PlayerJoinedEvent) => {
-    createJoinAnnouncementPcm(player).then((pcm) => {
-      if (pcm && ffmpegProc === proc) queueAudio(pcm);
-    }).catch((err) => console.error("Join announcement error:", err));
-  };
-  gameEngine.on("playerJoined", onPlayerJoined);
-  (proc as any)._onPlayerJoined = onPlayerJoined;
-
   gameEngine.start();
 }
 
@@ -567,11 +536,8 @@ async function startServer() {
           case "spawnPlayer":
           case "spawnFlag": {
             const name = (msg.name || msg.country || "").trim();
-            const spawned = gameEngine.spawnPlayer({
-              id: `admin:${name.toLowerCase()}`,
-              name,
-            });
-            if (spawned) gameEngine.addChatMessage(name || msg.user || "Admin", "joined");
+            const country = gameEngine.spawnCountryFromText(name);
+            if (country) gameEngine.addChatMessage(country, "added by admin");
             break;
           }
         }
